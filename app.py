@@ -94,14 +94,13 @@ def cargar_datos():
     # --- Mano de Obra: en vivo desde el Google Sheet de la app de campo ---
     mo = pd.read_csv(URL_SHEET_MANO_OBRA)
     mo = mo.dropna(subset=["nombre"]).copy()
-    # Normaliza el nombre de la columna loteId sin importar cómo haya quedado
-    # escrita en el encabezado del Sheet (l/I minúscula-mayúscula son casi
-    # indistinguibles al escribir a mano en muchas fuentes) — así no depende
-    # de que el encabezado esté perfecto.
-    for col in mo.columns:
-        if col.strip().lower() == "loteid":
-            mo = mo.rename(columns={col: "loteId"})
-            break
+    # La columna loteId siempre es la ÚLTIMA columna del Sheet (así la escribe
+    # Codigo.gs, en orden fijo) — la identificamos por posición, no por el
+    # texto del encabezado, para no depender de que esté escrito perfecto
+    # (l minúscula e I mayúscula son casi indistinguibles en muchas fuentes).
+    ultima_col = mo.columns[-1]
+    if ultima_col != "loteId":
+        mo = mo.rename(columns={ultima_col: "loteId"})
     mo["fecha"] = pd.to_datetime(mo["fecha"], errors="coerce")
     mo["horas"] = pd.to_numeric(mo["horas"], errors="coerce")
     mo["nombre_norm"] = mo["nombre"].apply(normalizar_nombre)
