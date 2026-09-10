@@ -1,0 +1,9 @@
+TipoHora,Factor,Descripcion
+Ordinaria Diurna,1.0,"Dentro de jornada ordinaria (lun-sáb), 6:00-19:00"
+Recargo Nocturno (Ordinaria),1.35,"Dentro de jornada ordinaria, 19:00-6:00 (recargo nocturno 35% - CST art.168)"
+Extra Diurna,1.25,"Hora suplementaria diurna, fuera de jornada ordinaria semanal (recargo 25%)"
+Extra Nocturna,1.75,"Hora suplementaria nocturna, fuera de jornada ordinaria semanal (recargo 75%, ya incluye nocturnidad)"
+Dominical/Festivo Ordinaria Diurna,1.9,"Trabajo ordinario en domingo o festivo, diurno (recargo dominical 90% vigente jul-2026)"
+Dominical/Festivo Ordinaria Nocturna,2.25,"Trabajo ordinario en domingo o festivo, nocturno (90% dominical + 35% nocturno)"
+Dominical/Festivo Extra Diurna,2.15,Hora extra diurna en domingo o festivo (25% extra + 90% dominical)
+Dominical/Festivo Extra Nocturna,2.65,Hora extra nocturna en domingo o festivo (75% extra nocturna + 90% dominical)
