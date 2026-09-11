@@ -101,6 +101,11 @@ def cargar_datos():
     ultima_col = mo.columns[-1]
     if ultima_col != "loteId":
         mo = mo.rename(columns={ultima_col: "loteId"})
+    # El encabezado real del Sheet quedó escrito "codcat" en vez de "codact"
+    # desde el principio — lo normalizamos aquí para que el resto del código
+    # (y el cálculo de Eficiencia) no dependa de que alguien lo corrija allá.
+    if "codact" not in mo.columns and "codcat" in mo.columns:
+        mo = mo.rename(columns={"codcat": "codact"})
     mo["fecha"] = pd.to_datetime(mo["fecha"], errors="coerce")
     mo["horas"] = pd.to_numeric(mo["horas"], errors="coerce")
     mo["nombre_norm"] = mo["nombre"].apply(normalizar_nombre)
