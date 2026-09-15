@@ -89,6 +89,20 @@ def normalizar_nombre(nombre):
     return re.sub(r"\s+", " ", n)
 
 
+def etiqueta_semana(fecha):
+    """Devuelve la semana laboral (lunes a viernes) de una fecha, como
+    'DD Mon - DD Mon', junto con el lunes de esa semana (para poder ordenar
+    las semanas cronológicamente sin depender de texto)."""
+    if pd.isna(fecha):
+        return pd.Series({"semana_lunes": pd.NaT, "semana_etiqueta": None})
+    lunes = fecha - pd.Timedelta(days=fecha.weekday())
+    viernes = lunes + pd.Timedelta(days=4)
+    meses = {1:"Ene",2:"Feb",3:"Mar",4:"Abr",5:"May",6:"Jun",
+             7:"Jul",8:"Ago",9:"Sep",10:"Oct",11:"Nov",12:"Dic"}
+    etiqueta = f"{lunes.day:02d} {meses[lunes.month]} - {viernes.day:02d} {meses[viernes.month]}"
+    return pd.Series({"semana_lunes": lunes, "semana_etiqueta": etiqueta})
+
+
 @st.cache_data(ttl=60)
 def cargar_datos():
     # --- Mano de Obra: en vivo desde el Google Sheet de la app de campo ---
@@ -126,6 +140,7 @@ def cargar_datos():
     mo = mo.rename(columns={
         "frenteNombre": "frente", "tipoHora": "tipo_hora", "TarifaHoraReal": "tarifa_hora",
     })
+    mo[["semana_lunes", "semana_etiqueta"]] = mo["fecha"].apply(etiqueta_semana)
 
     # --- Equipos: inventario fijo (agosto) + movimientos EN VIVO (app unificada) ---
     inv = pd.read_csv(RUTA_EQUIPOS_INVENTARIO, parse_dates=["fecha"])
@@ -135,23 +150,25 @@ def cargar_datos():
     mov["valorUnitario"] = pd.to_numeric(mov["valorUnitario"], errors="coerce")
     mov["costo_estimado"] = mov["cantidad"] * mov["valorUnitario"]
     mov = mov.rename(columns={"frenteNombre": "frente"})
+    mov["fecha"] = pd.to_datetime(mov["fecha"], errors="coerce")
+    mov[["semana_lunes", "semana_etiqueta"]] = mov["fecha"].apply(etiqueta_semana)
     return mo, inv, mov
 
 
 def rol_generico(cargo):
     """Traduce un cargo real (ej. 'Maestro Primero_Electricista') al rol
-    genérico del catálogo de rendimientos (Ayudante / Oficial). Maestro no
-    tiene tasa propia en el catálogo, así que no se traduce (queda fuera
-    del cálculo de productividad)."""
+    genérico del catálogo de rendimientos (Ayudante / Oficial / Otro).
+    Maestro usa la tasa 'Otro' (trabajo de supervisión/mixto) en vez de
+    quedar excluido del cálculo de productividad."""
     if not isinstance(cargo, str):
         return None
     c = cargo.lower()
-    if "maestro" in c:
-        return None
     if "ayudante" in c or "auxiliar" in c:
         return "Ayudante"
     if "oficial" in c:
         return "Oficial"
+    if "maestro" in c:
+        return "Otro"
     return None
 
 
@@ -270,10 +287,38 @@ with tab1:
     fig3.update_traces(line=dict(width=3), marker=dict(size=8, color=VERDE_OSCURO))
     st.plotly_chart(fig3, width='stretch')
 
+    st.subheader("📅 Resumen semanal (lunes a viernes)")
+    st.caption(
+        "Para el corte de fin de semana: cuánto costó y cuántas horas se "
+        "registraron cada semana laboral."
+    )
+    semanal_mo = (
+        mo_f.dropna(subset=["semana_lunes"])
+        .groupby(["semana_lunes", "semana_etiqueta"], as_index=False)
+        .agg(costo_semana=("costo_calculado", "sum"), horas_semana=("horas", "sum"))
+        .sort_values("semana_lunes")
+    )
+    if semanal_mo.empty:
+        st.info("Todavía no hay suficientes fechas para armar el resumen semanal.")
+    else:
+        figs = px.bar(
+            semanal_mo, x="semana_etiqueta", y="costo_semana",
+            labels={"semana_etiqueta": "Semana", "costo_semana": "Costo ($)"},
+            text_auto=".2s", color_discrete_sequence=[VERDE_AIA],
+        )
+        figs.update_xaxes(categoryorder="array", categoryarray=semanal_mo["semana_etiqueta"])
+        st.plotly_chart(figs, width='stretch')
+        st.dataframe(
+            semanal_mo.rename(columns={
+                "semana_etiqueta": "Semana", "costo_semana": "Costo ($)", "horas_semana": "Horas",
+            })[["Semana", "Costo ($)", "Horas"]],
+            width='stretch', hide_index=True,
+        )
+
     st.subheader("Detalle de registros")
     st.dataframe(
         mo_f[["fecha", "nombre", "cargo", "frente", "horas", "tipo_hora",
-              "tarifa_hora", "costo_calculado"]].sort_values("fecha", ascending=False),
+              "tarifa_hora", "costo_calculado", "semana_etiqueta"]].sort_values("fecha", ascending=False),
         width='stretch',
     )
 
@@ -315,9 +360,35 @@ with tab2:
 
     st.subheader("🟢 Movimientos / solicitudes de equipo (en vivo)")
     st.metric("Costo estimado en movimientos registrados", f"$ {mov['costo_estimado'].sum(skipna=True):,.0f}")
+
+    st.markdown("**📅 Resumen semanal (lunes a viernes)**")
+    semanal_eq = (
+        mov.dropna(subset=["semana_lunes"])
+        .groupby(["semana_lunes", "semana_etiqueta"], as_index=False)
+        .agg(costo_semana=("costo_estimado", "sum"), movimientos_semana=("equipo", "count"))
+        .sort_values("semana_lunes")
+    )
+    if semanal_eq.empty:
+        st.info("Todavía no hay suficientes fechas para armar el resumen semanal de equipos.")
+    else:
+        figeq = px.bar(
+            semanal_eq, x="semana_etiqueta", y="costo_semana",
+            labels={"semana_etiqueta": "Semana", "costo_semana": "Costo ($)"},
+            text_auto=".2s", color_discrete_sequence=[DORADO_ACENTO],
+        )
+        figeq.update_xaxes(categoryorder="array", categoryarray=semanal_eq["semana_etiqueta"])
+        st.plotly_chart(figeq, width='stretch')
+        st.dataframe(
+            semanal_eq.rename(columns={
+                "semana_etiqueta": "Semana", "costo_semana": "Costo ($)",
+                "movimientos_semana": "N° movimientos",
+            })[["Semana", "Costo ($)", "N° movimientos"]],
+            width='stretch', hide_index=True,
+        )
+
     st.dataframe(
         mov[["fecha", "solicitante", "frente", "proveedor", "equipo", "unidad",
-             "cantidad", "valorUnitario", "costo_estimado"]].sort_values("fecha", ascending=False),
+             "cantidad", "valorUnitario", "costo_estimado", "semana_etiqueta"]].sort_values("fecha", ascending=False),
         width='stretch',
     )
 
@@ -326,10 +397,10 @@ with tab3:
     st.subheader("Cumplimiento de productividad por actividad")
     st.caption(
         "Compara la cantidad ejecutada (reportada por el maestro) contra la cantidad "
-        "esperada según el rendimiento presupuestado de Ayudantes y Oficiales en esa "
-        "actividad. **Las horas de Maestro no se incluyen en el cálculo** — el catálogo "
-        "de rendimientos no tiene una tasa productiva específica para ese cargo, ya que "
-        "su rol es principalmente de supervisión."
+        "esperada según el rendimiento presupuestado de Ayudantes, Oficiales y Maestros "
+        "en esa actividad. **Las horas de Maestro se comparan con la tasa 'Otro'** del "
+        "catálogo de rendimientos — su trabajo suele ser más de supervisión, así que "
+        "esta tasa es más general que la de Ayudante/Oficial."
     )
 
     efi = calcular_eficiencia(mo)
