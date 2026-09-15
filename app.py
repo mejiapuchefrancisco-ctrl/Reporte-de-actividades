@@ -89,6 +89,18 @@ def normalizar_nombre(nombre):
     return re.sub(r"\s+", " ", n)
 
 
+def formato_pesos_millones(valor):
+    """Formatea un valor en pesos colombianos, abreviado en millones para
+    que sea fácil de leer de un vistazo (ej. $26.6M en vez de $26.639.450)."""
+    if pd.isna(valor):
+        return "$ 0"
+    if abs(valor) >= 1_000_000:
+        return f"$ {valor/1_000_000:,.1f}M"
+    if abs(valor) >= 1_000:
+        return f"$ {valor/1_000:,.0f}K"
+    return f"$ {valor:,.0f}"
+
+
 def etiqueta_semana(fecha):
     """Devuelve la semana laboral (lunes a viernes) de una fecha, como
     'DD Mon - DD Mon', junto con el lunes de esa semana (para poder ordenar
@@ -225,7 +237,23 @@ with col_titulo:
 with st.sidebar:
     st.header("Filtros")
     frentes_mo = sorted(mo["frente"].dropna().unique())
-    frente_sel = st.multiselect("Frente de trabajo", frentes_mo, default=frentes_mo)
+    frente_sel = st.multiselect("Frente de trabajo / intervención", frentes_mo, default=frentes_mo)
+
+    semanas_disponibles = (
+        mo.dropna(subset=["semana_lunes", "semana_etiqueta"])
+        .drop_duplicates(subset=["semana_etiqueta"])
+        .sort_values("semana_lunes")["semana_etiqueta"].tolist()
+    )
+    semana_sel = st.multiselect("Semana (lunes a viernes)", semanas_disponibles, default=semanas_disponibles)
+
+    fecha_min = mo["fecha"].min()
+    fecha_max = mo["fecha"].max()
+    rango_fecha = st.date_input(
+        "Rango de fechas (o un solo día)",
+        value=(fecha_min.date(), fecha_max.date()) if pd.notna(fecha_min) else None,
+        min_value=fecha_min.date() if pd.notna(fecha_min) else None,
+        max_value=fecha_max.date() if pd.notna(fecha_max) else None,
+    )
     st.divider()
     st.info(
         "🟢 **Mano de Obra: datos en vivo**\n\n"
@@ -234,16 +262,22 @@ with st.sidebar:
     )
 
 mo_f = mo[mo["frente"].isin(frente_sel)] if frente_sel else mo
+mo_f = mo_f[mo_f["semana_etiqueta"].isin(semana_sel)] if semana_sel else mo_f
+mov_f = mov.copy()
+mov_f = mov_f[mov_f["semana_etiqueta"].isin(semana_sel)] if semana_sel else mov_f
+if isinstance(rango_fecha, tuple) and len(rango_fecha) == 2:
+    d_ini, d_fin = rango_fecha
+    mo_f = mo_f[(mo_f["fecha"].dt.date >= d_ini) & (mo_f["fecha"].dt.date <= d_fin)]
+    mov_f = mov_f[(mov_f["fecha"].dt.date >= d_ini) & (mov_f["fecha"].dt.date <= d_fin)]
+elif isinstance(rango_fecha, tuple) and len(rango_fecha) == 1:
+    mo_f = mo_f[mo_f["fecha"].dt.date == rango_fecha[0]]
+    mov_f = mov_f[mov_f["fecha"].dt.date == rango_fecha[0]]
 
-# ============ KPIs PRINCIPALES ============
-col1, col2, col3, col4 = st.columns(4)
+# ============ KPIs PRINCIPALES (Mano de Obra) ============
+col1, col2, col3 = st.columns(3)
 col1.metric("Costo M.O. calculado", f"$ {mo_f['costo_calculado'].sum():,.0f}")
 col2.metric("Horas registradas", f"{mo_f['horas'].sum():,.0f} h")
 col3.metric("Personal activo", mo_f["nombre"].nunique())
-col4.metric(
-    "Valor inventariado Equipos",
-    f"$ {(inv['cantidad'] * inv['valorUnitario']).sum():,.0f}",
-)
 
 st.divider()
 
@@ -287,33 +321,43 @@ with tab1:
     fig3.update_traces(line=dict(width=3), marker=dict(size=8, color=VERDE_OSCURO))
     st.plotly_chart(fig3, width='stretch')
 
-    st.subheader("📅 Resumen semanal (lunes a viernes)")
+    st.subheader("📅 Resumen semanal por frente (lunes a viernes)")
     st.caption(
-        "Para el corte de fin de semana: cuánto costó y cuántas horas se "
-        "registraron cada semana laboral."
+        "Para el corte de fin de semana: cuánto costó cada frente/intervención "
+        "en cada semana laboral. Usa el filtro de fecha en la barra lateral para "
+        "ver un día puntual en vez de la semana completa."
     )
     semanal_mo = (
         mo_f.dropna(subset=["semana_lunes"])
-        .groupby(["semana_lunes", "semana_etiqueta"], as_index=False)
+        .groupby(["semana_lunes", "semana_etiqueta", "frente"], as_index=False)
         .agg(costo_semana=("costo_calculado", "sum"), horas_semana=("horas", "sum"))
         .sort_values("semana_lunes")
     )
     if semanal_mo.empty:
         st.info("Todavía no hay suficientes fechas para armar el resumen semanal.")
     else:
+        orden_semanas = semanal_mo.sort_values("semana_lunes")["semana_etiqueta"].unique()
         figs = px.bar(
-            semanal_mo, x="semana_etiqueta", y="costo_semana",
-            labels={"semana_etiqueta": "Semana", "costo_semana": "Costo ($)"},
-            text_auto=".2s", color_discrete_sequence=[VERDE_AIA],
+            semanal_mo, x="semana_etiqueta", y="costo_semana", color="frente",
+            labels={"semana_etiqueta": "Semana", "costo_semana": "Costo ($)", "frente": "Frente"},
+            barmode="group", color_discrete_sequence=PALETA_CATEGORICA,
         )
-        figs.update_xaxes(categoryorder="array", categoryarray=semanal_mo["semana_etiqueta"])
+        figs.update_xaxes(categoryorder="array", categoryarray=orden_semanas)
         st.plotly_chart(figs, width='stretch')
-        st.dataframe(
-            semanal_mo.rename(columns={
-                "semana_etiqueta": "Semana", "costo_semana": "Costo ($)", "horas_semana": "Horas",
-            })[["Semana", "Costo ($)", "Horas"]],
-            width='stretch', hide_index=True,
-        )
+
+        st.markdown("**Matriz costo por semana y frente**")
+        matriz_mo = semanal_mo.pivot_table(
+            index="semana_etiqueta", columns="frente", values="costo_semana",
+            aggfunc="sum", fill_value=0,
+        ).reindex(orden_semanas)
+        st.dataframe(matriz_mo.style.format(formato_pesos_millones), width='stretch')
+
+        st.markdown("**Horas por semana y frente**")
+        matriz_horas = semanal_mo.pivot_table(
+            index="semana_etiqueta", columns="frente", values="horas_semana",
+            aggfunc="sum", fill_value=0,
+        ).reindex(orden_semanas)
+        st.dataframe(matriz_horas.style.format("{:,.1f}"), width='stretch')
 
     st.subheader("Detalle de registros")
     st.dataframe(
@@ -324,6 +368,10 @@ with tab1:
 
 # ============ TAB EQUIPOS ============
 with tab2:
+    st.metric(
+        "Valor inventariado Equipos",
+        f"$ {(inv['cantidad'] * inv['valorUnitario']).sum():,.0f}",
+    )
     st.caption(
         "📋 Inventario y gráficas de categoría: snapshot fijo de agosto 2026. "
         "🟢 Movimientos/solicitudes (abajo): en vivo desde la app de campo."
@@ -359,12 +407,12 @@ with tab2:
     st.dataframe(inv, width='stretch')
 
     st.subheader("🟢 Movimientos / solicitudes de equipo (en vivo)")
-    st.metric("Costo estimado en movimientos registrados", f"$ {mov['costo_estimado'].sum(skipna=True):,.0f}")
+    st.metric("Costo estimado en movimientos registrados", f"$ {mov_f['costo_estimado'].sum(skipna=True):,.0f}")
 
-    st.markdown("**📅 Resumen semanal (lunes a viernes)**")
+    st.markdown("**📅 Resumen semanal por frente (lunes a viernes)**")
     semanal_eq = (
-        mov.dropna(subset=["semana_lunes"])
-        .groupby(["semana_lunes", "semana_etiqueta"], as_index=False)
+        mov_f.dropna(subset=["semana_lunes", "frente"])
+        .groupby(["semana_lunes", "semana_etiqueta", "frente"], as_index=False)
         .agg(costo_semana=("costo_estimado", "sum"), movimientos_semana=("equipo", "count"))
         .sort_values("semana_lunes")
     )
@@ -372,22 +420,22 @@ with tab2:
         st.info("Todavía no hay suficientes fechas para armar el resumen semanal de equipos.")
     else:
         figeq = px.bar(
-            semanal_eq, x="semana_etiqueta", y="costo_semana",
-            labels={"semana_etiqueta": "Semana", "costo_semana": "Costo ($)"},
-            text_auto=".2s", color_discrete_sequence=[DORADO_ACENTO],
+            semanal_eq, x="semana_etiqueta", y="costo_semana", color="frente",
+            labels={"semana_etiqueta": "Semana", "costo_semana": "Costo ($)", "frente": "Frente"},
+            barmode="group", color_discrete_sequence=PALETA_CATEGORICA,
         )
-        figeq.update_xaxes(categoryorder="array", categoryarray=semanal_eq["semana_etiqueta"])
+        figeq.update_xaxes(categoryorder="array", categoryarray=sorted(semanal_eq["semana_etiqueta"].unique(),
+                            key=lambda e: semanal_eq.loc[semanal_eq["semana_etiqueta"] == e, "semana_lunes"].iloc[0]))
         st.plotly_chart(figeq, width='stretch')
-        st.dataframe(
-            semanal_eq.rename(columns={
-                "semana_etiqueta": "Semana", "costo_semana": "Costo ($)",
-                "movimientos_semana": "N° movimientos",
-            })[["Semana", "Costo ($)", "N° movimientos"]],
-            width='stretch', hide_index=True,
-        )
+
+        matriz_eq = semanal_eq.pivot_table(
+            index="semana_etiqueta", columns="frente", values="costo_semana",
+            aggfunc="sum", fill_value=0,
+        ).reindex(semanal_eq.sort_values("semana_lunes")["semana_etiqueta"].unique())
+        st.dataframe(matriz_eq.style.format(formato_pesos_millones), width='stretch')
 
     st.dataframe(
-        mov[["fecha", "solicitante", "frente", "proveedor", "equipo", "unidad",
+        mov_f[["fecha", "solicitante", "frente", "proveedor", "equipo", "unidad",
              "cantidad", "valorUnitario", "costo_estimado", "semana_etiqueta"]].sort_values("fecha", ascending=False),
         width='stretch',
     )
