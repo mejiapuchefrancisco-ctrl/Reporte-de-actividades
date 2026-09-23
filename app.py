@@ -25,6 +25,9 @@ ESTADO DE LOS DATOS:
     por bloque en la app) contra la cantidad esperada según el rendimiento
     presupuestado de Ayudantes/Oficiales. Requiere que el Sheet tenga la
     columna 'loteId' (ver instrucciones abajo).
+  - Rendimiento real por categoría: NUEVO (23-sep-2026) — cruza las horas de
+    Registros con las cantidades de la pestaña Mediciones (Oficiales), por
+    semana + frente + categoría, usando categorias_sinco.csv.
 """
 import re
 import unicodedata
@@ -45,6 +48,26 @@ URL_TARIFAS = (
     "https://drive.google.com/uc?export=download&id="
     "1gUGj51qvXvmwZvyhhgy-05CY5INWHSST"
 )
+URL_SHEET_MEDICIONES = (
+    "https://docs.google.com/spreadsheets/d/"
+    "1Sbt-r9yR_pcyluP_JLX9nA2nwxpW3cU2ATVPMwvNP-I/gviz/tq?tqx=out:csv&headers=1&sheet=Mediciones"
+)
+RUTA_CATEGORIAS = "categorias_sinco.csv"  # código SINCO -> categoría A-K / NM / FASE2
+# Las 11 categorías del formulario de Mediciones (mismo nombre exacto que envía
+# medicion_cantidades.html, porque el Sheet guarda el nombre y no la letra)
+CATEGORIAS_MEDICION = {
+    "A": ("Vaciado de concreto", "m³"),
+    "B": ("Mamposteria (muro en bloque + dovelas)", "m²"),
+    "C": ("Revoque", "m²"),
+    "D": ("Pintura", "m²"),
+    "E": ("Enchape / Revestimiento ceramico", "m²"),
+    "F": ("Instalacion de piso (baldosa/granito/porcelanato)", "m²"),
+    "G": ("Instalacion de cielo raso", "m²"),
+    "H": ("Muro en drywall / Superboard", "m²"),
+    "I": ("Demolicion (muros y pisos)", "m²"),
+    "J": ("Excavacion", "m³"),
+    "K": ("Retiro de escombros / Trasiego", "m³"),
+}
 RUTA_RECARGOS = "recargos.csv"
 RUTA_EQUIPOS_INVENTARIO = "hechos_equipos_inventario.csv"
 RUTA_LOGO = "aia.png"
@@ -235,7 +258,66 @@ def calcular_eficiencia(mo_df):
     return agg
 
 
+@st.cache_data(ttl=60)
+def cargar_mediciones():
+    """Mediciones diarias de los Oficiales (pestaña Mediciones del Sheet, en vivo).
+    Devuelve un DataFrame vacío (con columnas) si todavía no hay mediciones."""
+    cols = ["fecha", "frente_cod", "cat", "cantidad", "oficial"]
+    try:
+        med = pd.read_csv(URL_SHEET_MEDICIONES)
+    except Exception:
+        return pd.DataFrame(columns=cols)
+    if "frenteCod" not in med.columns or "categoria" not in med.columns or med.empty:
+        return pd.DataFrame(columns=cols)
+    nombre_a_letra = {v[0]: k for k, v in CATEGORIAS_MEDICION.items()}
+    med["cat"] = med["categoria"].map(nombre_a_letra)
+    med["cantidad"] = pd.to_numeric(
+        med["cantidad"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+    med["frente_cod"] = (pd.to_numeric(med["frenteCod"], errors="coerce")
+                         .astype("Int64").astype(str).str.zfill(2))
+    med["fecha"] = pd.to_datetime(med["fecha"], errors="coerce")
+    med = med.dropna(subset=["fecha", "cat", "cantidad"])
+    return med[cols].copy()
+
+
+def cruce_rendimiento(mo_df, med_df):
+    """Une horas-hombre (Registros) con cantidades medidas (Mediciones) por
+    semana + frente + categoría. El código SINCO de cada hora se traduce a su
+    categoría con categorias_sinco.csv; la cantidad la pone el Oficial."""
+    cat = pd.read_csv(RUTA_CATEGORIAS, dtype=str)
+    h = mo_df.dropna(subset=["codact", "fecha"]).copy()
+    h["codact"] = h["codact"].astype(str).str.strip()
+    cat = cat.rename(columns={"frente": "frente_cod", "categoria": "cat"})
+    h = h.merge(cat[["codact", "frente_cod", "cat"]], on="codact", how="left")
+    h = h[h["cat"].isin(CATEGORIAS_MEDICION.keys())]
+    horas = h.groupby(["semana_lunes", "semana_etiqueta", "frente_cod", "cat"], as_index=False).agg(
+        HH=("horas", "sum"), costo=("costo_calculado", "sum"), personas=("nombre", "nunique"))
+
+    m = med_df.copy()
+    if not m.empty:
+        m[["semana_lunes", "semana_etiqueta"]] = m["fecha"].apply(etiqueta_semana)
+    cant = (m.groupby(["semana_lunes", "semana_etiqueta", "frente_cod", "cat"], as_index=False)
+            .agg(cantidad=("cantidad", "sum"), mediciones=("cantidad", "size"))
+            if not m.empty else
+            pd.DataFrame(columns=["semana_lunes", "semana_etiqueta", "frente_cod", "cat", "cantidad", "mediciones"]))
+
+    x = horas.merge(cant, on=["semana_lunes", "semana_etiqueta", "frente_cod", "cat"], how="outer")
+    x["HH"] = pd.to_numeric(x["HH"], errors="coerce").fillna(0)
+    x["costo"] = pd.to_numeric(x["costo"], errors="coerce").fillna(0)
+    x["cantidad"] = pd.to_numeric(x["cantidad"], errors="coerce").fillna(0)
+    x["estado"] = "✅ Cruce completo"
+    x.loc[(x["HH"] > 0) & (x["cantidad"] == 0), "estado"] = "⏳ Horas sin medición"
+    x.loc[(x["HH"] == 0) & (x["cantidad"] > 0), "estado"] = "⚠️ Medición sin horas"
+    ok = x["estado"] == "✅ Cruce completo"
+    x["HH_por_unidad"] = (x["HH"] / x["cantidad"]).where(ok)
+    x["costo_por_unidad"] = (x["costo"] / x["cantidad"]).where(ok)
+    x["categoria"] = x["cat"].map(lambda c: f"{c} - {CATEGORIAS_MEDICION[c][0]}")
+    x["unidad"] = x["cat"].map(lambda c: CATEGORIAS_MEDICION[c][1])
+    return x.sort_values(["semana_lunes", "frente_cod", "cat"])
+
+
 mo, inv, mov, tarifas = cargar_datos()
+med = cargar_mediciones()
 
 
 col_logo, col_titulo = st.columns([1, 6])
@@ -284,6 +366,21 @@ if isinstance(rango_fecha, tuple) and len(rango_fecha) == 2:
 elif isinstance(rango_fecha, tuple) and len(rango_fecha) == 1:
     mo_f = mo_f[mo_f["fecha"].dt.date == rango_fecha[0]]
     mov_f = mov_f[mov_f["fecha"].dt.date == rango_fecha[0]]
+
+# Mediciones: mismos filtros de fecha/semana/frente que Mano de Obra
+med_f = med.copy()
+if not med_f.empty:
+    med_f[["semana_lunes", "semana_etiqueta"]] = med_f["fecha"].apply(etiqueta_semana)
+    med_f = med_f[med_f["semana_etiqueta"].isin(semana_sel)] if semana_sel else med_f
+    if isinstance(rango_fecha, tuple) and len(rango_fecha) == 2:
+        med_f = med_f[(med_f["fecha"].dt.date >= rango_fecha[0]) & (med_f["fecha"].dt.date <= rango_fecha[1])]
+    elif isinstance(rango_fecha, tuple) and len(rango_fecha) == 1:
+        med_f = med_f[med_f["fecha"].dt.date == rango_fecha[0]]
+    if frente_sel:
+        codigos_sel = (pd.to_numeric(mo.loc[mo["frente"].isin(frente_sel), "codfrente"], errors="coerce")
+                       .dropna().astype(int).astype(str).str.zfill(2).unique())
+        med_f = med_f[med_f["frente_cod"].isin(codigos_sel)]
+    med_f = med_f.drop(columns=["semana_lunes", "semana_etiqueta"])
 
 # ============ KPIs PRINCIPALES (Mano de Obra) ============
 col1, col2, col3 = st.columns(3)
@@ -662,6 +759,57 @@ with tab2:
 
 # ============ TAB EFICIENCIA ============
 with tab3:
+    # ---------- NUEVO: rendimiento real por categoría (Mediciones × Horas) ----------
+    st.subheader("Rendimiento real por categoría — Mediciones de Oficiales × Horas de Maestros")
+    st.caption(
+        "Cada hora registrada se asigna a una categoría (A-K) según su código SINCO "
+        "(categorias_sinco.csv) y se cruza con la cantidad que midieron los Oficiales, "
+        "por **semana + frente + categoría**. El rendimiento es **integral**: incluye todas "
+        "las horas de la categoría (p. ej. en Concreto también el acero de refuerzo). "
+        "Ojo: si hay personal sin registrar, las horas salen bajas y el rendimiento sale "
+        "mejor de lo que es."
+    )
+    cruce = cruce_rendimiento(mo_f, med_f)
+    completos = cruce[cruce["estado"] == "✅ Cruce completo"]
+    if med_f.empty:
+        st.info(
+            "Todavía no hay mediciones de los Oficiales en el periodo/frentes filtrados. "
+            "Mientras tanto, esta tabla muestra las horas-hombre que ya están listas para cruzarse."
+        )
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Combinaciones con cruce completo", len(completos))
+    k2.metric("Costo M.O. cruzado", f"$ {completos['costo'].sum():,.0f}")
+    k3.metric("Horas sin medición", f"{cruce.loc[cruce['estado'] == '⏳ Horas sin medición', 'HH'].sum():,.0f} h")
+    k4.metric("Mediciones sin horas", int((cruce["estado"] == "⚠️ Medición sin horas").sum()))
+
+    if not completos.empty:
+        graf = completos.assign(etiqueta=completos["frente_cod"] + " · " + completos["categoria"])
+        fig_cu = px.bar(
+            graf.groupby(["etiqueta", "unidad"], as_index=False).agg(costo=("costo", "sum"), cantidad=("cantidad", "sum"))
+            .assign(costo_por_unidad=lambda d: d["costo"] / d["cantidad"])
+            .sort_values("costo_por_unidad"),
+            x="costo_por_unidad", y="etiqueta", orientation="h", color="unidad",
+            color_discrete_sequence=[VERDE_AIA, DORADO_ACENTO],
+            labels={"costo_por_unidad": "Costo M.O. por unidad ($)", "etiqueta": "Frente · Categoría"},
+            title="Costo de mano de obra por unidad ejecutada",
+        )
+        st.plotly_chart(fig_cu, width='stretch')
+
+    tabla = cruce[["semana_etiqueta", "frente_cod", "categoria", "unidad", "HH", "costo",
+                   "cantidad", "HH_por_unidad", "costo_por_unidad", "estado"]].rename(columns={
+        "semana_etiqueta": "Semana", "frente_cod": "Frente", "categoria": "Categoría",
+        "unidad": "Unidad", "HH": "Horas-hombre", "costo": "Costo M.O. ($)",
+        "cantidad": "Cantidad medida", "HH_por_unidad": "HH / unidad",
+        "costo_por_unidad": "$ / unidad", "estado": "Estado"})
+    st.dataframe(
+        tabla.style.format({
+            "Horas-hombre": "{:,.1f}", "Costo M.O. ($)": "${:,.0f}", "Cantidad medida": "{:,.2f}",
+            "HH / unidad": "{:,.2f}", "$ / unidad": "${:,.0f}",
+        }, na_rep="—"),
+        width='stretch', hide_index=True,
+    )
+
+    st.divider()
     st.subheader("Cumplimiento de productividad por actividad")
     st.caption(
         "Compara la cantidad ejecutada (reportada por el maestro) contra la cantidad "
