@@ -68,6 +68,11 @@ CATEGORIAS_MEDICION = {
     "J": ("Excavacion", "m³"),
     "K": ("Retiro de escombros / Trasiego", "m³"),
 }
+NOMBRES_CATEGORIA = {k: v[0] for k, v in CATEGORIAS_MEDICION.items()}
+NOMBRES_CATEGORIA.update({
+    "L": "Aseo y orden", "M": "Apoyo y logistica (cargue, acarreo)", "N": "Desmonte y retiro",
+    "O": "Instalaciones provisionales", "P": "Otra",
+})
 RUTA_RECARGOS = "recargos.csv"
 RUTA_EQUIPOS_INVENTARIO = "hechos_equipos_inventario.csv"
 RUTA_LOGO = "aia.png"
@@ -288,6 +293,12 @@ def cruce_rendimiento(mo_df, med_df):
     h = mo_df.dropna(subset=["codact", "fecha"]).copy()
     h["codact"] = h["codact"].astype(str).str.strip()
     cat = cat.rename(columns={"frente": "frente_cod", "categoria": "cat"})
+    # Actividades no presupuestadas: el código ya trae frente y categoría (NP-05-C)
+    np_cods = pd.Series(mo_df["codact"].dropna().astype(str).str.strip().unique())
+    np_cods = np_cods[np_cods.str.match(r"^NP-\d{2}-[A-Z]$")]
+    if not np_cods.empty:
+        cat = pd.concat([cat, pd.DataFrame({"codact": np_cods, "frente_cod": np_cods.str[3:5],
+                                            "cat": np_cods.str[6]})], ignore_index=True)
     h = h.merge(cat[["codact", "frente_cod", "cat"]], on="codact", how="left")
     h = h[h["cat"].isin(CATEGORIAS_MEDICION.keys())]
     horas = h.groupby(["semana_lunes", "semana_etiqueta", "frente_cod", "cat"], as_index=False).agg(
@@ -311,8 +322,8 @@ def cruce_rendimiento(mo_df, med_df):
     x.loc[(x["HH"] > 0) & (x["cantidad"] > 0), "estado"] = "✅ Cruce completo"
     x.loc[(x["HH"] <= 0) & (x["cantidad"] > 0), "estado"] = "⚠️ Medición sin horas"
     ok = x["estado"] == "✅ Cruce completo"
-    x["HH_por_unidad"] = (x["HH"] / x["cantidad"]).where(ok)
-    x["costo_por_unidad"] = (x["costo"] / x["cantidad"]).where(ok)
+    x["HH_por_unidad"] = (x["HH"] / x["cantidad"]).where(ok).astype(float)
+    x["costo_por_unidad"] = (x["costo"] / x["cantidad"]).where(ok).astype(float)
     x["categoria"] = x["cat"].map(lambda c: f"{c} - {CATEGORIAS_MEDICION[c][0]}")
     x["unidad"] = x["cat"].map(lambda c: CATEGORIAS_MEDICION[c][1])
     return x.sort_values(["semana_lunes", "frente_cod", "cat"])
@@ -392,8 +403,12 @@ col3.metric("Personal activo", mo_f["nombre"].nunique())
 
 st.divider()
 
-tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["📋 Resumen Ejecutivo", "👷 Mano de Obra", "🚜 Equipos", "📈 Eficiencia", "🧹 Calidad de datos", "🔎 Códigos por Persona"])
+# Pestañas visibles (24-sep-2026): Resumen semanal (fusiona Resumen Ejecutivo +
+# Mano de Obra), Códigos por Persona y Productividad. Equipos y Calidad de datos
+# quedan ocultas; para volver a mostrarlas cambia estas banderas a True.
+MOSTRAR_EQUIPOS = False
+MOSTRAR_CALIDAD = False
+tab0, tab5, tab3 = st.tabs(["📋 Resumen semanal", "🔎 Códigos por Persona", "📈 Productividad"])
 
 # ============ TAB RESUMEN EJECUTIVO SEMANAL ============
 with tab0:
@@ -602,31 +617,30 @@ with tab0:
                 width='stretch', hide_index=True,
             )
 
-# ============ TAB MANO DE OBRA ============
-with tab1:
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.subheader("Costo por frente de trabajo")
-        costo_frente = (
-            mo_f.groupby("frente", as_index=False)["costo_calculado"]
-            .sum()
-            .sort_values("costo_calculado", ascending=True)
-        )
-        fig = px.bar(
-            costo_frente, x="costo_calculado", y="frente", orientation="h",
-            labels={"costo_calculado": "Costo ($)", "frente": "Frente"},
-            color="costo_calculado", color_continuous_scale=ESCALA_VERDE,
-        )
-        fig.update_layout(coloraxis_showscale=False)
-        st.plotly_chart(fig, width='stretch')
-
-    with c2:
-        st.subheader("Horas por tipo de hora")
-        horas_tipo = mo_f.groupby("tipo_hora", as_index=False)["horas"].sum()
-        fig2 = px.pie(horas_tipo, names="tipo_hora", values="horas", hole=0.4,
-                       color_discrete_sequence=PALETA_CATEGORICA)
-        st.plotly_chart(fig2, width='stretch')
+# ============ (antes TAB MANO DE OBRA) -> continúa en Resumen semanal ============
+with tab0:
+    st.divider()
+    # ---------- NUEVO: actividades no presupuestadas (códigos NP-<frente>-<categoría>) ----------
+    st.subheader("Actividades no presupuestadas")
+    np_f = mo_f[mo_f["codact"].astype(str).str.startswith("NP-")].copy()
+    if np_f.empty:
+        st.caption("No hay actividades no presupuestadas en el periodo filtrado.")
+    else:
+        np_f["cat"] = np_f["codact"].str.split("-").str[2]
+        np_f["categoria"] = np_f["cat"].map(lambda c: f"{c} - {NOMBRES_CATEGORIA.get(c, c)}")
+        np_f["descripcion"] = np_f["actDesc"].astype(str).str.replace("[NO PRESUPUESTADA] ", "", regex=False)
+        n1, n2, n3 = st.columns(3)
+        n1.metric("Costo M.O. no presupuestado", f"$ {np_f['costo_calculado'].sum():,.0f}")
+        n2.metric("Horas no presupuestadas", f"{np_f['horas'].sum():,.1f} h")
+        n3.metric("% del costo del periodo", f"{100 * np_f['costo_calculado'].sum() / max(mo_f['costo_calculado'].sum(), 1):.1f}%")
+        st.caption("Soporte de horas y costo para sustentar mayores cantidades u obras adicionales.")
+        tabla_np = (np_f.groupby(["frente_corto", "categoria", "descripcion"], as_index=False)
+                    .agg(horas=("horas", "sum"), costo=("costo_calculado", "sum"), personas=("nombre", "nunique"))
+                    .sort_values("costo", ascending=False)
+                    .rename(columns={"frente_corto": "Frente", "categoria": "Categoría", "descripcion": "Descripción",
+                                     "horas": "Horas", "costo": "Costo M.O. ($)", "personas": "Personas"}))
+        st.dataframe(tabla_np.style.format({"Horas": "{:,.1f}", "Costo M.O. ($)": "${:,.0f}"}),
+                     width='stretch', hide_index=True)
 
     st.subheader("Costo acumulado en el tiempo")
     acumulado = (
@@ -677,15 +691,15 @@ with tab1:
         ).reindex(orden_semanas)
         st.dataframe(matriz_horas.style.format("{:,.1f}"), width='stretch')
 
-    st.subheader("Detalle de registros")
-    st.dataframe(
-        mo_f[["fecha", "nombre", "cargo", "frente", "horas", "tipo_hora",
-              "tarifa_hora", "costo_calculado", "semana_etiqueta"]].sort_values("fecha", ascending=False),
-        width='stretch',
-    )
+    with st.expander("Detalle de registros"):
+        st.dataframe(
+            mo_f[["fecha", "nombre", "cargo", "frente", "horas", "tipo_hora",
+                  "tarifa_hora", "costo_calculado", "semana_etiqueta"]].sort_values("fecha", ascending=False),
+            width='stretch',
+        )
 
 # ============ TAB EQUIPOS ============
-with tab2:
+if MOSTRAR_EQUIPOS:
     st.metric(
         "Valor inventariado Equipos",
         f"$ {(inv['cantidad'] * inv['valorUnitario']).sum():,.0f}",
@@ -884,7 +898,7 @@ with tab3:
         )
 
 # ============ TAB CALIDAD DE DATOS ============
-with tab4:
+if MOSTRAR_CALIDAD:
     st.subheader("Personal sin tarifa confirmada")
     sin_tarifa = mo.loc[~mo["match_tarifa"], ["nombre", "cargo", "frente", "horas"]]
     if len(sin_tarifa):
