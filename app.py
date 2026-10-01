@@ -177,7 +177,8 @@ def cargar_datos():
     if "codact" not in mo.columns and "codcat" in mo.columns:
         mo = mo.rename(columns={"codcat": "codact"})
     mo["fecha"] = pd.to_datetime(mo["fecha"], errors="coerce")
-    mo["horas"] = pd.to_numeric(mo["horas"], errors="coerce")
+    # El Sheet exporta los decimales con coma ("7,5"): sin esto se perdían las horas con decimales
+    mo["horas"] = pd.to_numeric(mo["horas"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
     mo["nombre_norm"] = mo["nombre"].apply(normalizar_nombre)
 
     tarifas = pd.read_excel(URL_TARIFAS, sheet_name="Maestro Personal", header=None)
@@ -450,7 +451,7 @@ st.divider()
 # quedan ocultas; para volver a mostrarlas cambia estas banderas a True.
 MOSTRAR_EQUIPOS = False
 MOSTRAR_CALIDAD = False
-tab0, tab5, tab3, tab7 = st.tabs(["📋 Resumen semanal", "🔎 Códigos por Persona", "📈 Productividad", "⚠️ Cargo vs. tarea"])
+tab0, tab8, tab5, tab3, tab7 = st.tabs(["📋 Resumen semanal", "✅ Cobertura de registro", "🔎 Códigos por Persona", "📈 Productividad", "⚠️ Cargo vs. tarea"])
 
 # ============ TAB RESUMEN EJECUTIVO SEMANAL ============
 with tab0:
@@ -979,6 +980,74 @@ with tab3:
             .sort_values("fecha", ascending=False),
             width='stretch',
         )
+
+# ============ TAB COBERTURA DE REGISTRO (1-oct-2026) ============
+# Quién del personal de obra (maestros, oficiales y ayudantes del Maestro de Personal) tiene
+# registro completo, parcial o ninguno en la semana. Reemplaza la sección que iba en el PDF del lunes.
+FESTIVOS_2026 = {"2026-01-01", "2026-01-12", "2026-03-23", "2026-04-02", "2026-04-03", "2026-05-01", "2026-05-18",
+                 "2026-06-08", "2026-06-15", "2026-06-29", "2026-07-20", "2026-08-07", "2026-08-17", "2026-10-12",
+                 "2026-11-02", "2026-11-16", "2026-12-08", "2026-12-25"}
+with tab8:
+    st.subheader("Cobertura de registro del personal de obra")
+    semanas_cob = (mo.dropna(subset=["semana_lunes", "semana_etiqueta"]).drop_duplicates("semana_etiqueta")
+                   .sort_values("semana_lunes", ascending=False))
+    if semanas_cob.empty:
+        st.info("No hay registros todavía.")
+    else:
+        hoy = pd.Timestamp.now(tz="America/Bogota").tz_localize(None).normalize()
+        opciones = semanas_cob["semana_etiqueta"].tolist()
+        lunes_list = semanas_cob["semana_lunes"].tolist()
+        # por defecto la última semana ya cerrada (si la actual va empezando, la anterior)
+        idx = 1 if len(opciones) > 1 and (hoy - pd.Timestamp(lunes_list[0])).days < 2 else 0
+        c1, c2 = st.columns([2, 1])
+        sem = c1.selectbox("Semana", opciones, index=idx)
+        incluir_sab = c2.checkbox("Contar el sábado", value=True)
+        lunes = pd.Timestamp(lunes_list[opciones.index(sem)])
+        dias = [lunes + pd.Timedelta(days=i) for i in range(6 if incluir_sab else 5)]
+        dias = [d for d in dias if d.strftime("%Y-%m-%d") not in FESTIVOS_2026 and d < hoy]
+        roster = tarifas[tarifas["CargoReal"].astype(str).str.contains("Maestro|Oficial|Ayudante", case=False, na=False)]
+        roster = roster[["NombreCompleto" if "NombreCompleto" in roster.columns else "NombreNormalizado", "CargoReal", "nombre_norm"]]
+        roster.columns = ["Persona", "Cargo", "nombre_norm"]
+        reg = mo[mo["fecha"].isin(dias)]
+        hechos = reg.groupby("nombre_norm")["fecha"].apply(lambda s: set(s.dt.normalize())).to_dict()
+        horas_dia = reg.groupby(["nombre_norm", reg["fecha"].dt.normalize()])["horas"].sum().to_dict()
+        etiquetas = {d: ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"][d.dayofweek] + f" {d.day}" for d in dias}
+        filas = []
+        for p_ in roster.itertuples():
+            tiene = hechos.get(p_.nombre_norm, set())
+            n = sum(1 for d in dias if d in tiene)
+            estado = "Completo" if dias and n == len(dias) else ("Parcial" if n else "Sin registro")
+            fila = {"Estado": estado, "Persona": p_.Persona, "Cargo": str(p_.Cargo).replace("_", " ")}
+            for d in dias:
+                h = horas_dia.get((p_.nombre_norm, d))
+                fila[etiquetas[d]] = f"{h:g} h" if h else "—"
+            fila["Días"] = f"{n}/{len(dias)}"
+            filas.append(fila)
+        cob = pd.DataFrame(filas)
+        if cob.empty or not dias:
+            st.info("Sin días hábiles cerrados en esa semana.")
+        else:
+            orden_est = {"Sin registro": 0, "Parcial": 1, "Completo": 2}
+            cob = cob.sort_values(["Estado", "Persona"], key=lambda s: s.map(orden_est) if s.name == "Estado" else s)
+            n_c, n_p, n_s = [(cob["Estado"] == e).sum() for e in ("Completo", "Parcial", "Sin registro")]
+            k1, k2, k3 = st.columns(3)
+            k1.metric("🟢 Registro completo", f"{n_c} de {len(cob)}")
+            k2.metric("🟡 Registro parcial", n_p)
+            k3.metric("🔴 Sin ningún registro", n_s)
+            st.caption(f"Personal de obra del Maestro de Personal (maestros, oficiales y ayudantes) · {len(dias)} día(s) hábil(es) "
+                       "ya cerrados, sin festivos. Cada casilla muestra las horas registradas ese día.")
+            filtro = st.multiselect("Mostrar", ["Sin registro", "Parcial", "Completo"], default=["Sin registro", "Parcial", "Completo"])
+            vista = cob[cob["Estado"].isin(filtro)]
+            colores = {"Sin registro": "background-color:#FDEBEA;color:#B4453A;font-weight:600",
+                       "Parcial": "background-color:#FFF3CD;color:#7A5E00;font-weight:600",
+                       "Completo": "background-color:#E2EFDA;color:#1A5632;font-weight:600"}
+            cols_dia = [etiquetas[d] for d in dias]
+            st.dataframe(
+                vista.style.map(lambda v: colores.get(v, ""), subset=["Estado"])
+                .map(lambda v: "color:#B4453A" if v == "—" else "color:#1A5632", subset=cols_dia),
+                width='stretch', hide_index=True, height=min(38 * (len(vista) + 1), 900))
+            st.download_button("⬇️ Descargar cobertura (CSV)", cob.to_csv(index=False).encode("utf-8"),
+                               file_name=f"cobertura_{lunes:%Y-%m-%d}.csv", mime="text/csv")
 
 # ============ TAB CARGO VS. TAREA (1-oct-2026) ============
 # Oficiales y maestros haciendo trabajo de ayudante (demolición, excavación, escombros, aseo,
