@@ -73,6 +73,12 @@ NOMBRES_CATEGORIA.update({
     "L": "Aseo y orden", "M": "Apoyo y logistica (cargue, acarreo)", "N": "Desmonte y retiro",
     "O": "Instalaciones provisionales", "P": "Otra",
 })
+# Referencia de productividad por frente × categoría (HH/unidad). Sale de la columna
+# "HH/unidad FINAL" de Referencias_Productividad_v2_Publicas.xlsx (APU SINCO ponderado
+# con rendimientos públicos). Si cambias el Excel, se vuelve a exportar este CSV.
+RUTA_REFERENCIAS = "referencias_productividad.csv"
+# Semáforo: real / referencia
+SEMAFORO_AMARILLO = 1.20  # hasta 20 % por encima de la referencia
 RUTA_RECARGOS = "recargos.csv"
 RUTA_EQUIPOS_INVENTARIO = "hechos_equipos_inventario.csv"
 RUTA_LOGO = "aia.png"
@@ -326,7 +332,43 @@ def cruce_rendimiento(mo_df, med_df):
     x["costo_por_unidad"] = (x["costo"] / x["cantidad"]).where(ok).astype(float)
     x["categoria"] = x["cat"].map(lambda c: f"{c} - {CATEGORIAS_MEDICION[c][0]}")
     x["unidad"] = x["cat"].map(lambda c: CATEGORIAS_MEDICION[c][1])
+    x = agregar_referencia(x)
     return x.sort_values(["semana_lunes", "frente_cod", "cat"])
+
+
+@st.cache_data(ttl=3600)
+def cargar_referencias():
+    try:
+        ref = pd.read_csv(RUTA_REFERENCIAS, dtype={"frente_cod": str, "cat": str})
+    except Exception:
+        return pd.DataFrame(columns=["frente_cod", "cat", "ref_hh_unidad"])
+    ref["frente_cod"] = ref["frente_cod"].str.zfill(2)
+    ref["ref_hh_unidad"] = pd.to_numeric(ref["ref_hh_unidad"], errors="coerce")
+    return ref[["frente_cod", "cat", "ref_hh_unidad"]]
+
+
+def semaforo(indice):
+    if pd.isna(indice):
+        return "—"
+    if indice <= 1:
+        return "🟢"
+    if indice <= SEMAFORO_AMARILLO:
+        return "🟡"
+    return "🔴"
+
+
+def agregar_referencia(x):
+    """Agrega la referencia (HH/unidad) de su frente × categoría y el semáforo.
+    Índice = HH/unidad real ÷ referencia (1,00 = igual a la referencia; menor = mejor).
+    $ referencia/unidad usa la tarifa real promedio de esas horas (con recargos)."""
+    x = x.drop(columns=[c for c in ["ref_hh_unidad"] if c in x.columns])
+    x = x.merge(cargar_referencias(), on=["frente_cod", "cat"], how="left")
+    x["indice"] = (x["HH_por_unidad"] / x["ref_hh_unidad"]).astype(float)
+    x["semaforo"] = x["indice"].map(semaforo)
+    tarifa_prom = (x["costo"] / x["HH"]).where(x["HH"] > 0)
+    x["costo_ref_por_unidad"] = (x["ref_hh_unidad"] * tarifa_prom).where(x["HH_por_unidad"].notna())
+    x["diferencia_pesos"] = (x["costo"] - x["costo_ref_por_unidad"] * x["cantidad"]).where(x["indice"].notna())
+    return x
 
 
 mo, inv, mov, tarifas = cargar_datos()
@@ -408,7 +450,7 @@ st.divider()
 # quedan ocultas; para volver a mostrarlas cambia estas banderas a True.
 MOSTRAR_EQUIPOS = False
 MOSTRAR_CALIDAD = False
-tab0, tab5, tab3 = st.tabs(["📋 Resumen semanal", "🔎 Códigos por Persona", "📈 Productividad"])
+tab0, tab5, tab3, tab7 = st.tabs(["📋 Resumen semanal", "🔎 Códigos por Persona", "📈 Productividad", "⚠️ Cargo vs. tarea"])
 
 # ============ TAB RESUMEN EJECUTIVO SEMANAL ============
 with tab0:
@@ -792,35 +834,76 @@ with tab3:
             "Todavía no hay mediciones de los Oficiales en el periodo/frentes filtrados. "
             "Mientras tanto, esta tabla muestra las horas-hombre que ya están listas para cruzarse."
         )
+    # Resumen del periodo filtrado por frente × categoría (suma todas las semanas)
+    periodo = (completos.groupby(["frente_cod", "cat", "categoria", "unidad"], as_index=False)
+               .agg(HH=("HH", "sum"), costo=("costo", "sum"), cantidad=("cantidad", "sum")))
+    if not periodo.empty:
+        periodo["HH_por_unidad"] = periodo["HH"] / periodo["cantidad"]
+        periodo["costo_por_unidad"] = periodo["costo"] / periodo["cantidad"]
+        periodo = agregar_referencia(periodo)
+
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Combinaciones con cruce completo", len(completos))
-    k2.metric("Costo M.O. cruzado", f"$ {completos['costo'].sum():,.0f}")
-    k3.metric("Horas sin medición", f"{cruce.loc[cruce['estado'] == '⏳ Horas sin medición', 'HH'].sum():,.0f} h")
-    k4.metric("Mediciones sin horas", int((cruce["estado"] == "⚠️ Medición sin horas").sum()))
+    n_sem = periodo["semaforo"].value_counts() if not periodo.empty else pd.Series(dtype=int)
+    k1.metric("🟢 Igual o mejor que la referencia", int(n_sem.get("🟢", 0)))
+    k2.metric("🟡 Hasta 20 % por encima", int(n_sem.get("🟡", 0)))
+    k3.metric("🔴 Más de 20 % por encima", int(n_sem.get("🔴", 0)))
+    dif = periodo["diferencia_pesos"].sum() if not periodo.empty else 0
+    k4.metric("Mayor costo (+) / ahorro (−) vs. referencia", f"$ {dif:,.0f}")
+    st.caption(
+        "Referencia = HH por unidad de cada frente y categoría (APU SINCO ponderado con "
+        "rendimientos públicos y factor de terminal en operación). 🟢 real ≤ referencia · "
+        f"🟡 hasta {int((SEMAFORO_AMARILLO - 1) * 100)} % por encima · 🔴 más que eso. "
+        "Menos HH por unidad = más productivo."
+    )
+    k5, k6 = st.columns(2)
+    k5.metric("Horas sin medición", f"{cruce.loc[cruce['estado'] == '⏳ Horas sin medición', 'HH'].sum():,.0f} h")
+    k6.metric("Mediciones sin horas", int((cruce["estado"] == "⚠️ Medición sin horas").sum()))
 
-    if not completos.empty:
-        graf = completos.assign(etiqueta=completos["frente_cod"] + " · " + completos["categoria"])
-        fig_cu = px.bar(
-            graf.groupby(["etiqueta", "unidad"], as_index=False).agg(costo=("costo", "sum"), cantidad=("cantidad", "sum"))
-            .assign(costo_por_unidad=lambda d: d["costo"] / d["cantidad"])
-            .sort_values("costo_por_unidad"),
-            x="costo_por_unidad", y="etiqueta", orientation="h", color="unidad",
-            color_discrete_sequence=[VERDE_AIA, DORADO_ACENTO],
-            labels={"costo_por_unidad": "Costo M.O. por unidad ($)", "etiqueta": "Frente · Categoría"},
-            title="Costo de mano de obra por unidad ejecutada",
+    if not periodo.empty and periodo["ref_hh_unidad"].notna().any():
+        g = periodo[periodo["ref_hh_unidad"].notna()].copy()
+        g["etiqueta"] = g["semaforo"] + " " + g["frente_cod"] + " · " + g["categoria"] + " (" + g["unidad"] + ")"
+        g = g.sort_values("indice")
+        largo = g.melt(id_vars=["etiqueta"], value_vars=["HH_por_unidad", "ref_hh_unidad"],
+                       var_name="serie", value_name="HH/unidad")
+        largo["serie"] = largo["serie"].map({"HH_por_unidad": "Real", "ref_hh_unidad": "Referencia"})
+        fig_ref = px.bar(
+            largo, x="HH/unidad", y="etiqueta", color="serie", barmode="group", orientation="h",
+            color_discrete_map={"Real": VERDE_AIA, "Referencia": GRIS_NEUTRO},
+            labels={"etiqueta": "Frente · Categoría", "serie": ""},
+            title="Horas-hombre por unidad: real vs. referencia (periodo filtrado)",
         )
-        st.plotly_chart(fig_cu, width='stretch')
+        fig_ref.update_layout(height=max(320, 60 * len(g)), yaxis={"categoryorder": "array",
+                              "categoryarray": g["etiqueta"].tolist()[::-1]})
+        st.plotly_chart(fig_ref, width='stretch')
 
-    tabla = cruce[["semana_etiqueta", "frente_cod", "categoria", "unidad", "HH", "costo",
-                   "cantidad", "HH_por_unidad", "costo_por_unidad", "estado"]].rename(columns={
-        "semana_etiqueta": "Semana", "frente_cod": "Frente", "categoria": "Categoría",
+        st.markdown("**Resumen del periodo por frente y categoría**")
+        tabla_p = g[["semaforo", "frente_cod", "categoria", "unidad", "HH", "cantidad", "HH_por_unidad",
+                     "ref_hh_unidad", "indice", "costo_por_unidad", "costo_ref_por_unidad",
+                     "diferencia_pesos"]].rename(columns={
+            "semaforo": "", "frente_cod": "Frente", "categoria": "Categoría", "unidad": "Unidad",
+            "HH": "Horas-hombre", "cantidad": "Cantidad medida", "HH_por_unidad": "HH/u real",
+            "ref_hh_unidad": "HH/u referencia", "indice": "Real ÷ ref.", "costo_por_unidad": "$/u real",
+            "costo_ref_por_unidad": "$/u referencia", "diferencia_pesos": "Mayor costo (+) / ahorro (−)"})
+        st.dataframe(
+            tabla_p.style.format({
+                "Horas-hombre": "{:,.1f}", "Cantidad medida": "{:,.2f}", "HH/u real": "{:,.2f}",
+                "HH/u referencia": "{:,.2f}", "Real ÷ ref.": "{:,.2f}", "$/u real": "${:,.0f}",
+                "$/u referencia": "${:,.0f}", "Mayor costo (+) / ahorro (−)": "${:,.0f}",
+            }, na_rep="—"),
+            width='stretch', hide_index=True,
+        )
+
+    st.markdown("**Detalle por semana**")
+    tabla = cruce[["semaforo", "semana_etiqueta", "frente_cod", "categoria", "unidad", "HH", "costo",
+                   "cantidad", "HH_por_unidad", "ref_hh_unidad", "costo_por_unidad", "estado"]].rename(columns={
+        "semaforo": "", "semana_etiqueta": "Semana", "frente_cod": "Frente", "categoria": "Categoría",
         "unidad": "Unidad", "HH": "Horas-hombre", "costo": "Costo M.O. ($)",
-        "cantidad": "Cantidad medida", "HH_por_unidad": "HH / unidad",
+        "cantidad": "Cantidad medida", "HH_por_unidad": "HH/u real", "ref_hh_unidad": "HH/u referencia",
         "costo_por_unidad": "$ / unidad", "estado": "Estado"})
     st.dataframe(
         tabla.style.format({
             "Horas-hombre": "{:,.1f}", "Costo M.O. ($)": "${:,.0f}", "Cantidad medida": "{:,.2f}",
-            "HH / unidad": "{:,.2f}", "$ / unidad": "${:,.0f}",
+            "HH/u real": "{:,.2f}", "HH/u referencia": "{:,.2f}", "$ / unidad": "${:,.0f}",
         }, na_rep="—"),
         width='stretch', hide_index=True,
     )
@@ -896,6 +979,99 @@ with tab3:
             .sort_values("fecha", ascending=False),
             width='stretch',
         )
+
+# ============ TAB CARGO VS. TAREA (1-oct-2026) ============
+# Oficiales y maestros haciendo trabajo de ayudante (demolición, excavación, escombros, aseo,
+# acarreo) y control de la jornada de supervisión de los maestros.
+CAT_AYUDANTE = {"I", "J", "K", "L", "M"}
+RX_AYUDANTE = re.compile(r"escombr|trasieg|botad|cargue|acarreo|realizaci[oó]n de aseo|aseo durante|orden y aseo|"
+                         r"aseo general|limpieza|demolic|excavaci|llenos? con material", re.I)
+
+def es_tarea_ayudante(codact, desc, obs):
+    desc = str(desc or ""); obs = str(obs or "")
+    if desc.startswith("[SUPERVISIÓN]") or obs.startswith("SUPERVISIÓN"):
+        return False
+    cod = str(codact or "").strip()
+    cat = MAPA_CAT.get(cod)
+    if not cat and cod.startswith("NP-"):
+        cat = cod.split("-")[-1]
+    if cat in CAT_AYUDANTE:
+        return True
+    return bool(RX_AYUDANTE.search(desc.split("(")[0]))
+
+try:
+    MAPA_CAT = dict(pd.read_csv(RUTA_CATEGORIAS, dtype=str)[["codact", "categoria"]].values)
+except Exception:
+    MAPA_CAT = {}
+
+with tab7:
+    st.subheader("Oficiales y maestros en tareas de ayudante")
+    st.caption("Horas de oficiales y maestros en demolición, excavación, escombros/trasiego, aseo y acarreo. "
+               "**Sobrecosto** = horas × (tarifa de la persona − tarifa promedio de ayudante) × factor del tipo de hora. "
+               "La supervisión registrada por los maestros no cuenta. Respeta los filtros de la barra lateral.")
+    t_ay = tarifas.loc[tarifas["CargoReal"].astype(str).str.contains("Ayudante", case=False, na=False), "TarifaHoraReal"]
+    tarifa_ayud = float(t_ay[t_ay > 0].mean()) if len(t_ay) else 0.0
+    cargo_real = dict(zip(tarifas["nombre_norm"], tarifas["CargoReal"].astype(str)))
+    d = mo_f.copy()
+    d["cargo_real"] = d["nombre_norm"].map(cargo_real).fillna(d["cargo"].astype(str))
+    d = d[d["cargo_real"].str.contains("Oficial|Maestro", case=False, na=False)]
+    d = d[[es_tarea_ayudante(c, a, o) for c, a, o in zip(d["codact"], d["actDesc"], d["observaciones"])]]
+    d["sobrecosto"] = d["horas"] * (d["tarifa_hora"] - tarifa_ayud).clip(lower=0) * d["Factor"]
+    if d.empty:
+        st.success("Sin oficiales ni maestros en tareas de ayudante en el periodo filtrado.")
+    else:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Personas", d["nombre"].nunique())
+        c2.metric("Horas en tareas de ayudante", f"{d['horas'].sum():,.0f} h")
+        c3.metric("Sobrecosto vs. hacerlo con ayudantes", f"$ {d['sobrecosto'].sum():,.0f}")
+        st.caption(f"Tarifa promedio de ayudante: $ {tarifa_ayud:,.0f}/h (Maestro de Personal).")
+        por_p = (d.groupby(["nombre", "cargo_real"], as_index=False)
+                 .agg(horas=("horas", "sum"), sobrecosto=("sobrecosto", "sum"), frentes=("codfrente", lambda s: ", ".join(sorted(set(s.astype(str)))))))
+        por_p = por_p.sort_values("sobrecosto", ascending=False)
+        fig_ay = px.bar(por_p.head(15).sort_values("sobrecosto"), x="sobrecosto", y="nombre", orientation="h",
+                        color_discrete_sequence=[DORADO_ACENTO],
+                        labels={"sobrecosto": "Sobrecosto ($)", "nombre": ""}, title="Sobrecosto por persona")
+        st.plotly_chart(fig_ay, width='stretch')
+        st.dataframe(por_p.rename(columns={"nombre": "Persona", "cargo_real": "Cargo", "horas": "Horas",
+                                           "sobrecosto": "Sobrecosto ($)", "frentes": "Frentes"})
+                     .style.format({"Horas": "{:,.1f}", "Sobrecosto ($)": "${:,.0f}"}), width='stretch', hide_index=True)
+        st.markdown("**Detalle por semana y actividad**")
+        det = (d.assign(actividad=d["actDesc"].astype(str).str.replace("[NO PRESUPUESTADA] ", "", regex=False).str.split("(").str[0].str.strip().str[:70])
+               .groupby(["semana_etiqueta", "nombre", "codact", "actividad"], as_index=False)
+               .agg(horas=("horas", "sum"), sobrecosto=("sobrecosto", "sum"))
+               .sort_values(["semana_etiqueta", "sobrecosto"], ascending=[True, False]))
+        st.dataframe(det.rename(columns={"semana_etiqueta": "Semana", "nombre": "Persona", "codact": "Código",
+                                         "actividad": "Actividad", "horas": "Horas", "sobrecosto": "Sobrecosto ($)"})
+                     .style.format({"Horas": "{:,.1f}", "Sobrecosto ($)": "${:,.0f}"}), width='stretch', hide_index=True)
+
+    st.divider()
+    st.subheader("Jornada de supervisión de los maestros")
+    st.caption("Registros hechos con la opción 'Hoy solo supervisé' de la app. Su costo ya está repartido entre las actividades "
+               "de la cuadrilla. Aquí se revisan horas, extras y lo que hicieron fuera del horario de la cuadrilla.")
+    sup = mo_f[mo_f["observaciones"].astype(str).str.startswith("SUPERVISIÓN")].copy()
+    if sup.empty:
+        st.info("Todavía no hay jornadas registradas como supervisión (la opción llega con la versión nueva de la app).")
+    else:
+        sup["es_extra"] = sup["tipo_hora"].astype(str).str.contains("Extra")
+        sup["horario"] = sup["observaciones"].str.extract(r"SUPERVISIÓN (\d{2}:\d{2}-\d{2}:\d{2})")[0]
+        sup["motivo"] = sup["observaciones"].str.extract(r"Fuera del horario de la cuadrilla: (.*)$")[0]
+        dia = (sup.groupby(["nombre", "fecha"], as_index=False)
+               .agg(horario=("horario", "first"), horas=("horas", "sum"),
+                    extras=("horas", lambda s: s[sup.loc[s.index, "es_extra"]].sum()),
+                    costo=("costo_calculado", "sum"), motivo=("motivo", "first")))
+        res = (dia.groupby("nombre", as_index=False)
+               .agg(dias=("fecha", "nunique"), horas=("horas", "sum"), extras=("extras", "sum"), costo=("costo", "sum"),
+                    dias_fuera=("motivo", lambda s: s.notna().sum())))
+        st.dataframe(res.rename(columns={"nombre": "Maestro", "dias": "Días", "horas": "Horas", "extras": "Horas extra",
+                                         "costo": "Costo ($)", "dias_fuera": "Días con horas fuera de la cuadrilla"})
+                     .style.format({"Horas": "{:,.1f}", "Horas extra": "{:,.1f}", "Costo ($)": "${:,.0f}"}),
+                     width='stretch', hide_index=True)
+        st.markdown("**Detalle por día**")
+        st.dataframe(dia.sort_values(["fecha", "nombre"], ascending=[False, True])
+                     .rename(columns={"nombre": "Maestro", "fecha": "Fecha", "horario": "Horario", "horas": "Horas",
+                                      "extras": "Extra", "costo": "Costo ($)", "motivo": "Fuera del horario de la cuadrilla"})
+                     .style.format({"Horas": "{:,.1f}", "Extra": "{:,.1f}", "Costo ($)": "${:,.0f}", "Fecha": "{:%d/%m/%Y}"}),
+                     width='stretch', hide_index=True)
 
 # ============ TAB CALIDAD DE DATOS ============
 if MOSTRAR_CALIDAD:
