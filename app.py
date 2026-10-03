@@ -115,6 +115,17 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
+DIAS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+DIAS_ES_LARGO = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+COLS_ASIST = {"nombre": "Nombre", "cargo": "Cargo", "dias_con_registro": "Días con registro",
+              "dias_totales": "Días del periodo", "dias_faltantes": "Días sin registro"}
+
+
+def dia_es(d, largo=False):
+    """Día en español: 'Mar 29' o 'Martes 29' (no depende del idioma del servidor)."""
+    return f"{(DIAS_ES_LARGO if largo else DIAS_ES)[d.weekday()]} {d.day:02d}"
+
+
 def normalizar_nombre(nombre):
     if not isinstance(nombre, str):
         return ""
@@ -613,7 +624,7 @@ with tab0:
                 "nombre": row["NombreCompleto"], "cargo": row["CargoReal"],
                 "estado": estado, "dias_con_registro": len(dias_reg_en_periodo),
                 "dias_totales": len(dias_periodo),
-                "dias_faltantes": ", ".join(d.strftime("%a %d").capitalize() for d in faltantes),
+                "dias_faltantes": ", ".join(dia_es(d) for d in faltantes),
             })
         asist = pd.DataFrame(filas_asist)
 
@@ -640,23 +651,23 @@ with tab0:
             if conteo_dias:
                 dia_top, veces = conteo_dias.most_common(1)[0]
                 st.warning(
-                    f"📌 **{dia_top.strftime('%A %d').capitalize()}** es el dia que mas se repite sin "
-                    f"registro entre quienes si trabajaron el resto de la semana ({veces} personas)."
+                    f"📌 **{dia_es(dia_top, largo=True)}** es el día que más se repite sin "
+                    f"registro entre quienes sí trabajaron el resto de la semana ({veces} personas)."
                 )
 
         with st.expander(f"🔴 Sin ningún registro ({n_total})"):
             st.dataframe(
-                asist.loc[asist["estado"] == "Total", ["nombre", "cargo"]],
+                asist.loc[asist["estado"] == "Total", ["nombre", "cargo"]].rename(columns=COLS_ASIST),
                 width='stretch', hide_index=True,
             )
         with st.expander(f"🟡 Registro parcial ({n_parcial})"):
             st.dataframe(
-                asist.loc[asist["estado"] == "Parcial", ["nombre", "cargo", "dias_con_registro", "dias_totales", "dias_faltantes"]],
+                asist.loc[asist["estado"] == "Parcial", ["nombre", "cargo", "dias_con_registro", "dias_totales", "dias_faltantes"]].rename(columns=COLS_ASIST),
                 width='stretch', hide_index=True,
             )
         with st.expander(f"✅ Registro completo ({n_completo})"):
             st.dataframe(
-                asist.loc[asist["estado"] == "Completo", ["nombre", "cargo"]],
+                asist.loc[asist["estado"] == "Completo", ["nombre", "cargo"]].rename(columns=COLS_ASIST),
                 width='stretch', hide_index=True,
             )
 
@@ -737,7 +748,10 @@ with tab0:
     with st.expander("Detalle de registros"):
         st.dataframe(
             mo_f[["fecha", "nombre", "cargo", "frente", "horas", "tipo_hora",
-                  "tarifa_hora", "costo_calculado", "semana_etiqueta"]].sort_values("fecha", ascending=False),
+                  "tarifa_hora", "costo_calculado", "semana_etiqueta"]].sort_values("fecha", ascending=False)
+            .rename(columns={"fecha": "Fecha", "nombre": "Nombre", "cargo": "Cargo", "frente": "Frente",
+                             "horas": "Horas", "tipo_hora": "Tipo de hora", "tarifa_hora": "Tarifa hora",
+                             "costo_calculado": "Costo", "semana_etiqueta": "Semana"}),
             width='stretch',
         )
 
@@ -1147,7 +1161,7 @@ if MOSTRAR_CALIDAD:
     st.subheader("Personal sin tarifa confirmada")
     sin_tarifa = mo.loc[~mo["match_tarifa"], ["nombre", "cargo", "frente", "horas"]]
     if len(sin_tarifa):
-        st.dataframe(sin_tarifa, width='stretch')
+        st.dataframe(sin_tarifa.rename(columns={"nombre": "Nombre", "cargo": "Cargo", "frente": "Frente", "horas": "Horas"}), width='stretch')
         st.info(
             "Estos nombres no cruzaron con la tabla maestra de personal. "
             "Revisa si hay errores de digitación o personal nuevo sin tarifa asignada."
