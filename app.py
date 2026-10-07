@@ -527,10 +527,15 @@ def cargar_seguimiento():
 
 
 def marcar_plan(df, tipo_n, col_ref, sg, lunes):
-    """Agrega la columna 'Plan de mejora' (estado) cruzando con Alertas_Seguimiento por semana + tipo + persona/código."""
+    """Columna 'Plan de mejora': estado del plan de esta semana o, si no hay, el plan abierto más reciente de semanas anteriores."""
     df = df.copy()
-    s_ = sg[(sg["tipo_n"] == str(tipo_n)) & (sg["lunes"] == lunes)]
-    est = dict(zip(s_["ref"], s_["Estado"]))
+    s_ = sg[(sg["tipo_n"] == str(tipo_n)) & (sg["lunes"] <= lunes)].sort_values("lunes")
+    est = {}
+    for _, r in s_.iterrows():
+        if r["lunes"] == lunes:
+            est[r["ref"]] = r["Estado"]
+        elif r["Estado"] != "Cerrada":
+            est[r["ref"]] = f"{r['Estado']} desde {r['lunes']:%d-%b}"
     df["Plan de mejora"] = df[col_ref].fillna("").astype(str).apply(normalizar_nombre).map(est).fillna("⚪ Sin plan")
     return df
 
@@ -658,12 +663,21 @@ def mostrar_alertas(mo_base, tarifas):
 
     # ---------- Resumen ----------
     k = st.columns(6)
-    k[0].metric("Personas sobre 40 % HE", f"{len(he_alert)}", f"$ {he_alert['Exceso sobre lo proyectado ($)'].sum():,.0f} exceso", delta_color="inverse")
-    k[1].metric("Jornadas excesivas", f"{len(dia_ex) + len(sem_ex)}", f"{len(dia_ex)} días > 12 h · {len(sem_ex)} sem. > 60 h", delta_color="off")
-    k[2].metric("A maestros (real / proy.)", f"{(a_real / a_proy if a_proy else 0):.0%}", f"$ {a_real - a_proy:,.0f}", delta_color="inverse")
-    k[3].metric("Actividades con MO ≥ 80 %", f"{len(sobre)}", f"$ {sobre['Exceso ($)'].sum():,.0f} pasado", delta_color="inverse")
-    k[4].metric("Posible doble pago", f"$ {doble['Costo_sem'].sum():,.0f}", f"{len(doble)} actividades", delta_color="off")
-    k[5].metric("No presupuestadas", f"$ {npw['Costo'].sum():,.0f}", f"{npw['codact'].nunique()} códigos", delta_color="off")
+    cop = lambda v: f"$ {v:,.0f}".replace(",", ".")
+    dif_a = a_real - a_proy
+    tarjetas = [
+        ("Personas sobre 40 % HE", f"{len(he_alert)}", f"🔴 {cop(he_alert['Exceso sobre lo proyectado ($)'].sum())} por encima del 40 % proyectado"),
+        ("Jornadas excesivas", f"{len(dia_ex) + len(sem_ex)}", f"{len(dia_ex)} días de más de {U.get('horas_dia_max', 12):.0f} h · {len(sem_ex)} personas con más de {U.get('horas_semana_max', 60):.0f} h/semana"),
+        ("A maestros (real / proy.)", f"{(a_real / a_proy if a_proy else 0):.0%}",
+         (f"🔴 {cop(dif_a)} por encima de lo proyectado" if dif_a > 0 else f"{cop(-dif_a)} por debajo de lo proyectado (ver detalle: vacantes / sin registro)")),
+        ("Actividades con MO ≥ 80 %", f"{len(sobre)}", f"🔴 {cop(sobre['Exceso ($)'].sum())} ya por encima de la MO proyectada"),
+        ("Posible doble pago", cop(doble['Costo_sem'].sum()), f"MO propia en {len(doble)} actividades con subcontrato"),
+        ("No presupuestadas", cop(npw['Costo'].sum()), f"{npw['codact'].nunique()} códigos · candidatas a adicional"),
+    ]
+    k = st.columns(6)
+    for col_, (lab, val, nota) in zip(k, tarjetas):
+        col_.metric(lab, val)
+        col_.caption(nota)
 
     fmt_p = {"% HE": "{:.0%}", "Horas": "{:,.1f}", "Horas extra/recargo": "{:,.1f}", "Exceso sobre lo proyectado ($)": "$ {:,.0f}"}
     with st.expander(f"1 · Horas extra por persona — {len(he_alert)} sobre {U.get('he_amarillo', .4):.0%} (proyectado en la A: 40 %)", expanded=True):
@@ -758,27 +772,97 @@ def mostrar_alertas(mo_base, tarifas):
                        file_name=f"Alertas_semana_{ini:%Y-%m-%d}.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_informe")
 
-    # ---------- 9. Planes de mejora ----------
+    # ---------- 9. Planes de mejora (seguimiento antes / ahora) ----------
+    def indicadores(l0):
+        """Valor de cada alerta por persona/código en la semana que empieza el lunes l0 (para comparar antes vs. ahora)."""
+        a_, b_ = pd.Timestamp(l0), pd.Timestamp(l0) + pd.Timedelta(days=6)
+        ww = d[(d["fecha"] >= a_) & (d["fecha"] <= b_)]
+        out = {}
+        if ww.empty:
+            return out
+        gg = ww.groupby("nombre_norm")
+        dias = gg["fecha"].apply(lambda x: x[x.dt.dayofweek < 6].dt.date.nunique())
+        base = base_sem * (dias / 6).clip(upper=1)
+        for nn_, v in (gg["heq"].sum() / base).items():
+            out[("1", nn_)] = v
+        for nn_, v in gg["horas"].sum().items():
+            out[("2", nn_)] = v
+        pm_all = pa[pa["Cargo en la proyección"].astype(str).str.upper().str.startswith("MAESTRO") & (pa["¿Proyectado en A?"] == "Sí")]
+        pp = pm_all.groupby("nombre_norm")["Salario total mes proyectado (con HE)"].sum() * fac
+        for nn_, v in ww[ww["es_maestro"]].groupby("nombre_norm")["costo_calculado"].sum().items():
+            out[("3", nn_)] = v / pp[nn_] if pp.get(nn_, 0) else np.nan
+        for nn_, v in ww[ww["nombre_norm"].isin(po["nombre_norm"])].groupby("nombre_norm")["costo_calculado"].sum().items():
+            out[("4", nn_)] = v
+        cod = ww.copy()
+        cod["ref"] = cod["codact"].apply(normalizar_nombre)
+        for t_, m_ in (("5", cod["campamento"]), ("7", pd.Series(True, index=cod.index)), ("8", cod["codact"].str.startswith("NP-"))):
+            for r_, v in cod[m_].groupby("ref")["costo_calculado"].sum().items():
+                out[(t_, r_)] = v
+        acum_ = d[d["fecha"] <= b_].groupby("codact")["costo_calculado"].sum()
+        pmo = mop.set_index("Código")["Proy. mano de obra"]
+        for c_, v in acum_.items():
+            if pmo.get(c_, 0) and pmo.get(c_, 0) > 0:
+                out[("6", normalizar_nombre(c_))] = v / pmo[c_]
+        out["_sem6"] = cod.groupby("ref")["costo_calculado"].sum().to_dict()
+        return out
+
+    FMT_T = {"1": lambda v: f"{v:.0%}", "2": lambda v: f"{v:,.1f} h", "3": lambda v: f"{v:.0%} de lo proy.", "4": lambda v: cop(v),
+             "5": lambda v: cop(v), "6": lambda v: f"{v:.0%} consumido", "7": lambda v: cop(v), "8": lambda v: cop(v)}
+
+    def resultado(t_, antes, ahora, ref_, ind_now):
+        if t_ == "6":
+            nuevo = ind_now.get("_sem6", {}).get(ref_, 0)
+            return "🟢 Sin consumo nuevo esta semana" if nuevo == 0 else f"🔴 Sigue consumiendo ({cop(nuevo)} esta semana)"
+        if pd.isna(ahora):
+            return "🟢 No aparece esta semana — se puede cerrar" if t_ in ("1", "2", "5", "7", "8") else "⚪ Sin registros esta semana"
+        if t_ == "1" and ahora <= U.get("he_amarillo", .4):
+            return "🟢 Mejoró, bajo el 40 % — se puede cerrar"
+        if t_ == "2" and ahora <= U.get("horas_semana_max", 60):
+            return "🟢 Mejoró, bajo el límite — se puede cerrar"
+        if pd.isna(antes) or antes == 0:
+            return "⚪ Sin dato de la semana del plan"
+        r_ = ahora / antes
+        return "🟢 Mejoró" if r_ < 0.9 else ("🔴 Empeoró" if r_ > 1.1 else "🟡 Sigue igual")
+
     st.divider()
-    st.markdown("#### 📝 Planes de mejora")
+    st.markdown("#### 📝 Planes de mejora — seguimiento")
     if sg.empty:
-        st.info("Aún no hay planes registrados. Los residentes los escriben en el Google Sheet de Registros, pestaña **Alertas_Seguimiento** "
+        st.info("Aún no hay planes registrados. Se escriben en el Google Sheet de Registros, pestaña **Alertas_Seguimiento** "
                 "(semana, tipo de alerta, frente, persona o código tal como aparece en esta pestaña, plan, responsable, fecha compromiso y estado).")
     else:
         abiertos = sg[sg["Estado"] != "Cerrada"]
         vencidos = abiertos[abiertos["Fecha compromiso"].notna() & (abiertos["Fecha compromiso"] < hoy)]
         q = st.columns(4)
-        q[0].metric("Planes de esta semana", int((sg["lunes"] == ini).sum()))
-        q[1].metric("Abiertos o en plan (todas las semanas)", len(abiertos))
-        q[2].metric("Vencidos", len(vencidos), delta_color="inverse")
+        q[0].metric("Planes registrados esta semana", int((sg["lunes"] == ini).sum()))
+        q[1].metric("Abiertos o en plan", len(abiertos))
+        q[2].metric("Vencidos", len(vencidos))
         q[3].metric("Cerrados", int((sg["Estado"] == "Cerrada").sum()))
-        ver = sg[(sg["lunes"] == ini) | (sg["Estado"] != "Cerrada")].copy()
+        ver = sg[(sg["lunes"] <= ini) & ((sg["lunes"] == ini) | (sg["Estado"] != "Cerrada"))].copy()
+        ind_now = indicadores(ini)
+        cache_ind = {}
+        antes_l, ahora_l, res_l = [], [], []
+        for _, r in ver.iterrows():
+            t_, ref_ = str(r["tipo_n"]), r["ref"]
+            if pd.isna(r["lunes"]) or t_ not in FMT_T:
+                antes_l.append(""); ahora_l.append(""); res_l.append(""); continue
+            if r["lunes"] not in cache_ind:
+                cache_ind[r["lunes"]] = indicadores(r["lunes"])
+            antes = cache_ind[r["lunes"]].get((t_, ref_), np.nan)
+            ahora = ind_now.get((t_, ref_), np.nan)
+            antes_l.append("" if pd.isna(antes) else FMT_T[t_](antes))
+            ahora_l.append("" if pd.isna(ahora) else FMT_T[t_](ahora))
+            res_l.append("🆕 Registrado esta semana" if r["lunes"] == ini else resultado(t_, antes, ahora, ref_, ind_now))
+        ver["Semana del plan"] = antes_l
+        ver[f"Semana {ini:%d-%b}"] = ahora_l
+        ver["Resultado"] = res_l
         ver["Vencido"] = np.where(ver["Fecha compromiso"].notna() & (ver["Fecha compromiso"] < hoy) & (ver["Estado"] != "Cerrada"), "⏰ Sí", "")
-        st.dataframe(ver.sort_values(["Estado", "Fecha compromiso"])[["Semana (lunes)", "Tipo de alerta", "Frente", "Persona o código", "Plan de mejora",
-                                                                       "Responsable", "Fecha compromiso", "Estado", "Vencido", "Resultado / comentario"]]
+        st.dataframe(ver.sort_values(["lunes", "Tipo de alerta"])[["Semana (lunes)", "Tipo de alerta", "Frente", "Persona o código", "Plan de mejora", "Responsable",
+                                                                  "Fecha compromiso", "Estado", "Vencido", "Semana del plan", f"Semana {ini:%d-%b}", "Resultado", "Resultado / comentario"]]
                      .style.format({"Fecha compromiso": lambda v: "" if pd.isna(v) else f"{v:%d/%m/%Y}"}), hide_index=True, width='stretch')
+        st.caption("Semana del plan = valor de la alerta cuando se registró el plan; la columna siguiente = valor en la semana elegida arriba. "
+                   "Si dice 'se puede cerrar', cambia el estado a 'Cerrada' en Alertas_Seguimiento y anota el resultado.")
     st.caption("Para registrar un plan: en el Google Sheet de Registros, pestaña Alertas_Seguimiento, copia la semana (lunes), el tipo de alerta "
-               "y la persona o código exactamente como aparecen aquí; el dashboard marca la alerta como 'En plan' o 'Cerrada'.")
+               "y la persona o código exactamente como aparecen aquí. El plan sigue apareciendo las semanas siguientes hasta que lo marques 'Cerrada'.")
 
 
 # Vistas (7-oct-2026): GERENCIA = Resumen general + Alertas de la semana + Presupuesto vs. ejecutado.
