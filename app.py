@@ -33,6 +33,7 @@ import re
 import unicodedata
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 
 # ============ CONFIGURACIÓN ============
@@ -467,6 +468,197 @@ st.divider()
 # quedan ocultas; para volver a mostrarlas cambia estas banderas a True.
 MOSTRAR_EQUIPOS = False
 MOSTRAR_CALIDAD = False
+# ============ ALERTAS DE LA SEMANA (7-oct-2026) ============
+# Parámetros (proyección de la A, MO proyectada SINCO, umbrales, residentes) en Drive:
+URL_PARAMS = (
+    "https://drive.google.com/uc?export=download&id="
+    "1c31oKbuKnXO2XV2AC3n4VOqhQmxm6FTr"
+)
+INC_HE = {  # horas equivalentes de recargo por tipo de hora (base para el % de horas extra)
+    "Ordinaria Diurna": 0.0, "Recargo Nocturno (Ordinaria)": 0.35, "Extra Diurna": 1.25, "Extra Nocturna": 1.75,
+    "Dominical/Festivo Ordinaria Diurna": 1.9, "Dominical/Festivo Extra Diurna": 2.15, "Dominical/Festivo Extra Nocturna": 2.65,
+}
+
+
+@st.cache_data(ttl=600)
+def cargar_parametros():
+    x = pd.read_excel(URL_PARAMS, sheet_name=None, dtype={"Código": str, "Cód. frente": str})
+    pa = x["Proyeccion_A"].copy()
+    mop = x["MO_proyectada"].copy()
+    um = x["Umbrales"]
+    rs = x["Residentes"].copy()
+    U = dict(zip(um["Parámetro"].astype(str), um["Valor"]))
+    for k, v in list(U.items()):
+        try:
+            U[k] = float(v)
+        except (TypeError, ValueError):
+            U[k] = str(v)
+    pa["nombre_norm"] = pa["Nombre en la app (Maestro de Personal)"].fillna("").apply(normalizar_nombre)
+    for c in ["Inicio", "Fin"]:
+        pa[c] = pd.to_datetime(pa[c], errors="coerce")
+    mop["Código"] = mop["Código"].astype(str).str.strip()
+    rs["Cód. frente"] = rs["Cód. frente"].astype(str).str.strip().str.zfill(2)
+    return pa, mop, U, rs
+
+
+def semaforo_txt(valor, amarillo, rojo):
+    if pd.isna(valor):
+        return ""
+    return "🔴 Rojo" if valor > rojo else ("🟡 Amarillo" if valor > amarillo else "🟢 Verde")
+
+
+def mostrar_alertas(mo_base, tarifas):
+    st.subheader("🚨 Alertas de la semana")
+    try:
+        pa, mop, U, rs = cargar_parametros()
+    except Exception as e:
+        st.error(f"No pude leer Parametros_Alertas.xlsx en Drive ({e}). Revisa que siga compartido con 'Cualquier persona con el enlace'.")
+        return
+    RES = dict(zip(rs["Cód. frente"], rs["Residente(s)"].fillna("—")))
+    d = mo_base.dropna(subset=["fecha"]).copy()
+    if d.empty:
+        st.info("No hay registros para los frentes seleccionados.")
+        return
+    d["lunes"] = (d["fecha"] - pd.to_timedelta(d["fecha"].dt.dayofweek, unit="D")).dt.normalize()
+    d["cod_fr"] = pd.to_numeric(d["codfrente"], errors="coerce").fillna(0).astype(int).astype(str).str.zfill(2)
+    d["residente_fr"] = d["cod_fr"].map(RES).fillna("—")
+    cargo_real = dict(zip(tarifas["nombre_norm"], tarifas["CargoReal"].astype(str)))
+    d["cargo_real"] = d["nombre_norm"].map(cargo_real).fillna(d["cargo"].astype(str))
+    d["es_maestro"] = d["cargo_real"].str.upper().str.startswith("MAESTRO")
+    d["heq"] = d["horas"] * d["tipo_hora"].map(INC_HE).fillna(0)
+    desc = d["actDesc"].fillna("").astype(str).str.upper()
+    d["campamento"] = (desc.str.contains(str(U.get("palabras_campamento", "CAMPAMENT")), regex=True)
+                       & ~desc.str.contains(str(U.get("palabras_no_campamento", "TRASLAD|RETIR|DESMONT|TRASIEG|ACARRE")), regex=True)
+                       & ~d["es_maestro"])
+    d["codact"] = d["codact"].astype(str).str.strip()
+
+    lunes_disp = sorted(d["lunes"].unique())
+    hoy = pd.Timestamp.now(tz="America/Bogota").tz_localize(None).normalize()
+    completas = [l for l in lunes_disp if pd.Timestamp(l) + pd.Timedelta(days=6) < hoy]
+    defecto = completas[-1] if completas else lunes_disp[-1]
+    etiq = {l: f"{pd.Timestamp(l):%d-%b} a {pd.Timestamp(l) + pd.Timedelta(days=6):%d-%b-%Y}" for l in lunes_disp}
+    sem = st.selectbox("Semana (lunes a domingo)", lunes_disp[::-1], index=lunes_disp[::-1].index(defecto),
+                       format_func=lambda l: etiq[l], key="sem_alertas")
+    ini, fin = pd.Timestamp(sem), pd.Timestamp(sem) + pd.Timedelta(days=6)
+    w = d[(d["fecha"] >= ini) & (d["fecha"] <= fin)]
+    hasta = d[d["fecha"] <= fin]
+    st.caption("Valores con la tarifa del Maestro de Personal (factor 1,4914). Umbrales y proyección: archivo Parametros_Alertas en Drive.")
+
+    # 1. % de horas extra por persona
+    base_sem = U.get("horas_base_semana", 49)
+    g = w.groupby("nombre_norm")
+    per = pd.DataFrame({
+        "Nombre": g["nombre"].first(), "Cargo": g["cargo_real"].first(),
+        "Días": g["fecha"].apply(lambda s: s[s.dt.dayofweek < 6].dt.date.nunique()),
+        "Horas": g["horas"].sum(), "Horas extra/recargo": g.apply(lambda t: t.loc[t["heq"] > 0, "horas"].sum()),
+        "heq": g["heq"].sum(), "tarifa": g["tarifa_hora"].first(),
+        "Frente principal": g.apply(lambda t: t.groupby("cod_fr")["horas"].sum().idxmax()),
+    })
+    per["Residente"] = per["Frente principal"].map(RES).fillna("—")
+    per["base"] = base_sem * (per["Días"] / 6).clip(upper=1)
+    per["% HE"] = (per["heq"] / per["base"]).where(per["base"] > 0)
+    per["Semáforo"] = per["% HE"].apply(lambda v: semaforo_txt(v, U.get("he_amarillo", .4), U.get("he_rojo", .45)))
+    per["Exceso sobre lo proyectado ($)"] = ((per["% HE"] - U.get("he_amarillo", .4)).clip(lower=0) * per["base"] * per["tarifa"]).fillna(0)
+    he_alert = per[per["% HE"] > U.get("he_amarillo", .4)].sort_values("% HE", ascending=False)
+
+    # 2. Jornadas excesivas
+    dia = w.groupby(["nombre", "fecha"])["horas"].sum().reset_index()
+    dia_ex = dia[dia["horas"] > U.get("horas_dia_max", 12)]
+    semh = w.groupby("nombre")["horas"].sum()
+    sem_ex = semh[semh > U.get("horas_semana_max", 60)]
+
+    # 3. A de maestros vs. proyección
+    fac = 7 / 30
+    activos = pa[(pa["Inicio"].isna() | (pa["Inicio"] <= fin)) & (pa["Fin"].isna() | (pa["Fin"] >= ini))]
+    pm = activos[activos["Cargo en la proyección"].astype(str).str.upper().str.startswith("MAESTRO") & (activos["¿Proyectado en A?"] == "Sí")]
+    real_m = w[w["es_maestro"]].groupby("nombre_norm").agg(Nombre=("nombre", "first"), Real=("costo_calculado", "sum"))
+    proy_m = pm.assign(P=pm["Salario total mes proyectado (con HE)"] * fac).groupby("nombre_norm")["P"].sum()
+    a_m = real_m.join(proy_m.rename("Proyectado"), how="outer")
+    vac = a_m.index == ""
+    a_m.loc[vac, "Nombre"] = f"Vacantes de maestro sin persona ({int((pm['nombre_norm'] == '').sum())})"
+    a_m["Nombre"] = a_m["Nombre"].fillna(pd.Series(dict(zip(pm["nombre_norm"], pm["Nombre en la proyección"]))))
+    a_m = a_m.fillna({"Real": 0, "Proyectado": 0})
+    a_m["Diferencia (real − proy.)"] = a_m["Real"] - a_m["Proyectado"]
+    a_m["Lectura"] = np.where(a_m["Proyectado"] == 0, "Hace de maestro pero no está proyectado como maestro en la A",
+                     np.where(a_m["Real"] == 0, "Proyectado sin registros esta semana", ""))
+    a_real, a_proy = a_m["Real"].sum(), a_m["Proyectado"].sum()
+
+    # 4. Oficiales / ayudantes proyectados en A  y  5. campamento
+    po = activos[~activos["Cargo en la proyección"].astype(str).str.upper().str.startswith("MAESTRO")
+                 & (activos["¿Proyectado en A?"] == "Sí") & (activos["nombre_norm"] != "")]
+    wo = w[w["nombre_norm"].isin(po["nombre_norm"])]
+    ofi = pd.DataFrame({
+        "Nombre": wo.groupby("nombre_norm")["nombre"].first(),
+        "A (campamento)": wo[wo["campamento"]].groupby("nombre_norm")["costo_calculado"].sum(),
+        "APU (actividades)": wo[~wo["campamento"]].groupby("nombre_norm")["costo_calculado"].sum(),
+    }).join(po.assign(P=po["Salario total mes proyectado (con HE)"] * fac).groupby("nombre_norm")["P"].sum().rename("Proyectado en A"), how="outer").fillna(0)
+    ofi["Nombre"] = ofi["Nombre"].replace(0, np.nan).fillna(pd.Series(dict(zip(po["nombre_norm"], po["Nombre en la proyección"]))))
+    ofi["A sobrestimada"] = ofi["Proyectado en A"] - ofi["A (campamento)"]
+    camp = w[w["campamento"]].groupby(["codact", "actDesc", "cod_fr"]).agg(Horas=("horas", "sum"), Personas=("nombre", "nunique"), Costo=("costo_calculado", "sum")).reset_index()
+
+    # 6. Sobrecosto de MO (acumulado hasta la semana) y posible doble pago
+    acum = hasta.groupby("codact").agg(Costo_acum=("costo_calculado", "sum"))
+    act_sem = w.groupby("codact").agg(Costo_sem=("costo_calculado", "sum"), Horas_sem=("horas", "sum"))
+    c = act_sem.join(acum).join(mop.set_index("Código")[["Descripción", "Proy. mano de obra", "Proy. subcontratos"]], how="left")
+    c = c[~c.index.str.startswith(("SUP-", "NP-"))]
+    c["% MO consumida"] = (c["Costo_acum"] / c["Proy. mano de obra"]).where(c["Proy. mano de obra"] > 0)
+    sobre = c[c["% MO consumida"] >= U.get("mo_amarillo", .8)].copy()
+    sobre["Semáforo"] = sobre["% MO consumida"].apply(lambda v: semaforo_txt(v, U.get("mo_amarillo", .8) - 1e-9, U.get("mo_rojo", 1.0)))
+    sobre["Exceso ($)"] = (sobre["Costo_acum"] - sobre["Proy. mano de obra"]).clip(lower=0)
+    doble = c[(c["Proy. mano de obra"].fillna(0) == 0) & (c["Proy. subcontratos"].fillna(0) > 0)].copy()
+
+    # 7. No presupuestadas
+    npw = w[w["codact"].str.startswith("NP-")].groupby(["codact", "actDesc", "cod_fr"]).agg(Horas=("horas", "sum"), Costo=("costo_calculado", "sum")).reset_index()
+
+    # ---------- Resumen ----------
+    k = st.columns(6)
+    k[0].metric("Personas sobre 40 % HE", f"{len(he_alert)}", f"$ {he_alert['Exceso sobre lo proyectado ($)'].sum():,.0f} exceso", delta_color="inverse")
+    k[1].metric("Jornadas excesivas", f"{len(dia_ex) + len(sem_ex)}", f"{len(dia_ex)} días > 12 h · {len(sem_ex)} sem. > 60 h", delta_color="off")
+    k[2].metric("A maestros (real / proy.)", f"{(a_real / a_proy if a_proy else 0):.0%}", f"$ {a_real - a_proy:,.0f}", delta_color="inverse")
+    k[3].metric("Actividades con MO ≥ 80 %", f"{len(sobre)}", f"$ {sobre['Exceso ($)'].sum():,.0f} pasado", delta_color="inverse")
+    k[4].metric("Posible doble pago", f"$ {doble['Costo_sem'].sum():,.0f}", f"{len(doble)} actividades", delta_color="off")
+    k[5].metric("No presupuestadas", f"$ {npw['Costo'].sum():,.0f}", f"{npw['codact'].nunique()} códigos", delta_color="off")
+
+    fmt_p = {"% HE": "{:.0%}", "Horas": "{:,.1f}", "Horas extra/recargo": "{:,.1f}", "Exceso sobre lo proyectado ($)": "$ {:,.0f}"}
+    with st.expander(f"1 · Horas extra por persona — {len(he_alert)} sobre {U.get('he_amarillo', .4):.0%} (proyectado en la A: 40 %)", expanded=True):
+        st.dataframe(he_alert[["Nombre", "Cargo", "Frente principal", "Residente", "Días", "Horas", "Horas extra/recargo", "% HE", "Semáforo", "Exceso sobre lo proyectado ($)"]]
+                     .style.format(fmt_p), hide_index=True, width='stretch')
+        st.caption("% HE = horas equivalentes de recargo (extra diurna 1,25; nocturna 1,75; recargo nocturno 0,35; dominical 1,90/2,15/2,65) ÷ 49 h base de la semana.")
+    with st.expander(f"2 · Jornadas excesivas — {len(dia_ex)} días de más de {U.get('horas_dia_max', 12):.0f} h, {len(sem_ex)} personas con más de {U.get('horas_semana_max', 60):.0f} h"):
+        c1, c2 = st.columns(2)
+        c1.dataframe(dia_ex.rename(columns={"nombre": "Nombre", "fecha": "Fecha", "horas": "Horas"}).sort_values("Horas", ascending=False)
+                     .style.format({"Horas": "{:,.1f}", "Fecha": "{:%d/%m/%Y}"}), hide_index=True, width='stretch')
+        c2.dataframe(sem_ex.rename("Horas en la semana").reset_index().rename(columns={"nombre": "Nombre"}).sort_values("Horas en la semana", ascending=False)
+                     .style.format({"Horas en la semana": "{:,.1f}"}), hide_index=True, width='stretch')
+    with st.expander(f"3 · Administración (A) de maestros — real $ {a_real:,.0f} vs proyectado $ {a_proy:,.0f}"):
+        st.dataframe(a_m.reset_index(drop=True)[["Nombre", "Proyectado", "Real", "Diferencia (real − proy.)", "Lectura"]]
+                     .sort_values("Diferencia (real − proy.)", ascending=False)
+                     .style.format({"Proyectado": "$ {:,.0f}", "Real": "$ {:,.0f}", "Diferencia (real − proy.)": "$ {:,.0f}"}), hide_index=True, width='stretch')
+        st.caption("Proyectado de la semana = salario total mes proyectado (con 40 % HE) × 7/30. Regla: todo lo que registran los maestros va a la A.")
+    with st.expander(f"4 · Oficiales y ayudantes proyectados en la A — A sobrestimada $ {ofi['A sobrestimada'].sum():,.0f} esta semana"):
+        st.dataframe(ofi.reset_index(drop=True)[["Nombre", "Proyectado en A", "A (campamento)", "APU (actividades)", "A sobrestimada"]]
+                     .sort_values("A sobrestimada", ascending=False)
+                     .style.format({c_: "$ {:,.0f}" for c_ in ["Proyectado en A", "A (campamento)", "APU (actividades)", "A sobrestimada"]}), hide_index=True, width='stretch')
+        st.caption("Por regla, la A solo asume el trabajo de oficiales y ayudantes DENTRO del campamento; el resto se carga al APU de la actividad.")
+    with st.expander(f"5 · Trabajo dentro del campamento (va a la A) — $ {camp['Costo'].sum():,.0f}"):
+        st.dataframe(camp.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"})
+                     .style.format({"Horas": "{:,.1f}", "Costo": "$ {:,.0f}"}), hide_index=True, width='stretch')
+    with st.expander(f"6 · Sobrecosto de mano de obra — {len(sobre)} actividades con 80 % o más de la MO proyectada consumida"):
+        st.dataframe(sobre.reset_index().rename(columns={"codact": "Código", "Costo_sem": "Costo semana", "Costo_acum": "Costo acumulado"})
+                     [["Código", "Descripción", "Proy. mano de obra", "Costo acumulado", "% MO consumida", "Semáforo", "Exceso ($)", "Costo semana"]]
+                     .sort_values("% MO consumida", ascending=False)
+                     .style.format({"Proy. mano de obra": "$ {:,.0f}", "Costo acumulado": "$ {:,.0f}", "% MO consumida": "{:.0%}", "Exceso ($)": "$ {:,.0f}", "Costo semana": "$ {:,.0f}"}),
+                     hide_index=True, width='stretch')
+        st.caption("Ojo: muchas alertas aquí vienen de códigos mal asignados en la app; revisar con el maestro antes de concluir sobrecosto.")
+    with st.expander(f"7 · Posible doble pago — MO propia en actividades contratadas por subcontrato: $ {doble['Costo_sem'].sum():,.0f}"):
+        st.dataframe(doble.reset_index().rename(columns={"codact": "Código", "Costo_sem": "MO propia semana", "Horas_sem": "Horas semana"})
+                     [["Código", "Descripción", "Proy. subcontratos", "Horas semana", "MO propia semana"]].sort_values("MO propia semana", ascending=False)
+                     .style.format({"Proy. subcontratos": "$ {:,.0f}", "Horas semana": "{:,.1f}", "MO propia semana": "$ {:,.0f}"}), hide_index=True, width='stretch')
+    with st.expander(f"8 · No presupuestadas de la semana — $ {npw['Costo'].sum():,.0f} (candidatas a cobro como adicional)"):
+        st.dataframe(npw.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"}).sort_values("Costo", ascending=False)
+                     .style.format({"Horas": "{:,.1f}", "Costo": "$ {:,.0f}"}), hide_index=True, width='stretch')
+
+
 # Vistas (7-oct-2026): GERENCIA = Resumen general + Alertas de la semana + Presupuesto vs. ejecutado.
 # CONTROL INTERNO (control de costos y residentes) = Cobertura, Códigos por persona, Productividad, Cargo vs. tarea.
 if VISTA_GERENCIA:
@@ -476,13 +668,7 @@ else:
 
 if VISTA_GERENCIA:
     with tabA:
-        st.subheader("Alertas de la semana")
-        st.info(
-            "🛠️ En construcción. Aquí aparecerán cada semana, con semáforo, frente y residente responsable: "
-            "% de horas extra por persona (proyectado 40 %), jornadas excesivas, administración (A) de maestros vs. proyección, "
-            "trabajo en campamento, sobrecosto de mano de obra por actividad, posible doble pago con subcontratos "
-            "y actividades no presupuestadas."
-        )
+        mostrar_alertas(mo[mo["frente"].isin(frente_sel)] if frente_sel else mo, tarifas)
     with tabP:
         st.subheader("Presupuesto vs. ejecutado por frente")
         st.info(
