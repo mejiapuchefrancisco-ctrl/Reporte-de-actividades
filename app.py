@@ -501,6 +501,40 @@ def cargar_parametros():
     return pa, mop, U, rs
 
 
+URL_SEGUIMIENTO = (
+    "https://docs.google.com/spreadsheets/d/"
+    "1Sbt-r9yR_pcyluP_JLX9nA2nwxpW3cU2ATVPMwvNP-I/gviz/tq?tqx=out:csv&headers=1&sheet=Alertas_Seguimiento"
+)
+COLS_SEG = ["Semana (lunes)", "Tipo de alerta", "Frente", "Persona o código", "Descripción de la alerta", "Plan de mejora",
+            "Responsable", "Fecha compromiso", "Estado", "Resultado / comentario"]
+
+
+@st.cache_data(ttl=60)
+def cargar_seguimiento():
+    try:
+        sg = pd.read_csv(URL_SEGUIMIENTO, dtype=str)
+    except Exception:
+        return pd.DataFrame(columns=COLS_SEG + ["tipo_n", "ref", "lunes"])
+    if not set(COLS_SEG[:4] + ["Estado"]).issubset(sg.columns):   # la pestaña aún no existe
+        return pd.DataFrame(columns=COLS_SEG + ["tipo_n", "ref", "lunes"])
+    sg = sg.dropna(subset=["Tipo de alerta"]).copy()
+    sg["tipo_n"] = sg["Tipo de alerta"].astype(str).str.extract(r"^(\d)")[0]
+    sg["ref"] = sg["Persona o código"].fillna("").apply(normalizar_nombre)
+    sg["lunes"] = pd.to_datetime(sg["Semana (lunes)"], errors="coerce").dt.normalize()
+    sg["Fecha compromiso"] = pd.to_datetime(sg["Fecha compromiso"], errors="coerce")
+    sg["Estado"] = sg["Estado"].fillna("Abierta")
+    return sg
+
+
+def marcar_plan(df, tipo_n, col_ref, sg, lunes):
+    """Agrega la columna 'Plan de mejora' (estado) cruzando con Alertas_Seguimiento por semana + tipo + persona/código."""
+    df = df.copy()
+    s_ = sg[(sg["tipo_n"] == str(tipo_n)) & (sg["lunes"] == lunes)]
+    est = dict(zip(s_["ref"], s_["Estado"]))
+    df["Plan de mejora"] = df[col_ref].fillna("").astype(str).apply(normalizar_nombre).map(est).fillna("⚪ Sin plan")
+    return df
+
+
 def semaforo_txt(valor, amarillo, rojo):
     if pd.isna(valor):
         return ""
@@ -560,6 +594,8 @@ def mostrar_alertas(mo_base, tarifas):
     per["Semáforo"] = per["% HE"].apply(lambda v: semaforo_txt(v, U.get("he_amarillo", .4), U.get("he_rojo", .45)))
     per["Exceso sobre lo proyectado ($)"] = ((per["% HE"] - U.get("he_amarillo", .4)).clip(lower=0) * per["base"] * per["tarifa"]).fillna(0)
     he_alert = per[per["% HE"] > U.get("he_amarillo", .4)].sort_values("% HE", ascending=False)
+    sg = cargar_seguimiento()
+    he_alert = marcar_plan(he_alert, 1, "Nombre", sg, ini)
 
     # 2. Jornadas excesivas
     dia = w.groupby(["nombre", "fecha"])["horas"].sum().reset_index()
@@ -621,42 +657,64 @@ def mostrar_alertas(mo_base, tarifas):
 
     fmt_p = {"% HE": "{:.0%}", "Horas": "{:,.1f}", "Horas extra/recargo": "{:,.1f}", "Exceso sobre lo proyectado ($)": "$ {:,.0f}"}
     with st.expander(f"1 · Horas extra por persona — {len(he_alert)} sobre {U.get('he_amarillo', .4):.0%} (proyectado en la A: 40 %)", expanded=True):
-        st.dataframe(he_alert[["Nombre", "Cargo", "Frente principal", "Residente", "Días", "Horas", "Horas extra/recargo", "% HE", "Semáforo", "Exceso sobre lo proyectado ($)"]]
+        st.dataframe(he_alert[["Nombre", "Cargo", "Frente principal", "Residente", "Días", "Horas", "Horas extra/recargo", "% HE", "Semáforo", "Exceso sobre lo proyectado ($)", "Plan de mejora"]]
                      .style.format(fmt_p), hide_index=True, width='stretch')
         st.caption("% HE = horas equivalentes de recargo (extra diurna 1,25; nocturna 1,75; recargo nocturno 0,35; dominical 1,90/2,15/2,65) ÷ 49 h base de la semana.")
     with st.expander(f"2 · Jornadas excesivas — {len(dia_ex)} días de más de {U.get('horas_dia_max', 12):.0f} h, {len(sem_ex)} personas con más de {U.get('horas_semana_max', 60):.0f} h"):
         c1, c2 = st.columns(2)
-        c1.dataframe(dia_ex.rename(columns={"nombre": "Nombre", "fecha": "Fecha", "horas": "Horas"}).sort_values("Horas", ascending=False)
+        c1.dataframe(marcar_plan(dia_ex.rename(columns={"nombre": "Nombre", "fecha": "Fecha", "horas": "Horas"}), 2, "Nombre", sg, ini).sort_values("Horas", ascending=False)
                      .style.format({"Horas": "{:,.1f}", "Fecha": "{:%d/%m/%Y}"}), hide_index=True, width='stretch')
-        c2.dataframe(sem_ex.rename("Horas en la semana").reset_index().rename(columns={"nombre": "Nombre"}).sort_values("Horas en la semana", ascending=False)
+        c2.dataframe(marcar_plan(sem_ex.rename("Horas en la semana").reset_index().rename(columns={"nombre": "Nombre"}), 2, "Nombre", sg, ini).sort_values("Horas en la semana", ascending=False)
                      .style.format({"Horas en la semana": "{:,.1f}"}), hide_index=True, width='stretch')
     with st.expander(f"3 · Administración (A) de maestros — real $ {a_real:,.0f} vs proyectado $ {a_proy:,.0f}"):
-        st.dataframe(a_m.reset_index(drop=True)[["Nombre", "Proyectado", "Real", "Diferencia (real − proy.)", "Lectura"]]
+        st.dataframe(marcar_plan(a_m.reset_index(drop=True), 3, "Nombre", sg, ini)[["Nombre", "Proyectado", "Real", "Diferencia (real − proy.)", "Lectura", "Plan de mejora"]]
                      .sort_values("Diferencia (real − proy.)", ascending=False)
                      .style.format({"Proyectado": "$ {:,.0f}", "Real": "$ {:,.0f}", "Diferencia (real − proy.)": "$ {:,.0f}"}), hide_index=True, width='stretch')
         st.caption("Proyectado de la semana = salario total mes proyectado (con 40 % HE) × 7/30. Regla: todo lo que registran los maestros va a la A.")
     with st.expander(f"4 · Oficiales y ayudantes proyectados en la A — A sobrestimada $ {ofi['A sobrestimada'].sum():,.0f} esta semana"):
-        st.dataframe(ofi.reset_index(drop=True)[["Nombre", "Proyectado en A", "A (campamento)", "APU (actividades)", "A sobrestimada"]]
+        st.dataframe(marcar_plan(ofi.reset_index(drop=True), 4, "Nombre", sg, ini)[["Nombre", "Proyectado en A", "A (campamento)", "APU (actividades)", "A sobrestimada", "Plan de mejora"]]
                      .sort_values("A sobrestimada", ascending=False)
                      .style.format({c_: "$ {:,.0f}" for c_ in ["Proyectado en A", "A (campamento)", "APU (actividades)", "A sobrestimada"]}), hide_index=True, width='stretch')
         st.caption("Por regla, la A solo asume el trabajo de oficiales y ayudantes DENTRO del campamento; el resto se carga al APU de la actividad.")
     with st.expander(f"5 · Trabajo dentro del campamento (va a la A) — $ {camp['Costo'].sum():,.0f}"):
-        st.dataframe(camp.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"})
+        st.dataframe(marcar_plan(camp.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"}), 5, "Código", sg, ini)
                      .style.format({"Horas": "{:,.1f}", "Costo": "$ {:,.0f}"}), hide_index=True, width='stretch')
     with st.expander(f"6 · Sobrecosto de mano de obra — {len(sobre)} actividades con 80 % o más de la MO proyectada consumida"):
-        st.dataframe(sobre.reset_index().rename(columns={"codact": "Código", "Costo_sem": "Costo semana", "Costo_acum": "Costo acumulado"})
-                     [["Código", "Descripción", "Proy. mano de obra", "Costo acumulado", "% MO consumida", "Semáforo", "Exceso ($)", "Costo semana"]]
+        st.dataframe(marcar_plan(sobre.reset_index().rename(columns={"codact": "Código", "Costo_sem": "Costo semana", "Costo_acum": "Costo acumulado"}), 6, "Código", sg, ini)
+                     [["Código", "Descripción", "Proy. mano de obra", "Costo acumulado", "% MO consumida", "Semáforo", "Exceso ($)", "Costo semana", "Plan de mejora"]]
                      .sort_values("% MO consumida", ascending=False)
                      .style.format({"Proy. mano de obra": "$ {:,.0f}", "Costo acumulado": "$ {:,.0f}", "% MO consumida": "{:.0%}", "Exceso ($)": "$ {:,.0f}", "Costo semana": "$ {:,.0f}"}),
                      hide_index=True, width='stretch')
         st.caption("Ojo: muchas alertas aquí vienen de códigos mal asignados en la app; revisar con el maestro antes de concluir sobrecosto.")
     with st.expander(f"7 · Posible doble pago — MO propia en actividades contratadas por subcontrato: $ {doble['Costo_sem'].sum():,.0f}"):
-        st.dataframe(doble.reset_index().rename(columns={"codact": "Código", "Costo_sem": "MO propia semana", "Horas_sem": "Horas semana"})
-                     [["Código", "Descripción", "Proy. subcontratos", "Horas semana", "MO propia semana"]].sort_values("MO propia semana", ascending=False)
+        st.dataframe(marcar_plan(doble.reset_index().rename(columns={"codact": "Código", "Costo_sem": "MO propia semana", "Horas_sem": "Horas semana"}), 7, "Código", sg, ini)
+                     [["Código", "Descripción", "Proy. subcontratos", "Horas semana", "MO propia semana", "Plan de mejora"]].sort_values("MO propia semana", ascending=False)
                      .style.format({"Proy. subcontratos": "$ {:,.0f}", "Horas semana": "{:,.1f}", "MO propia semana": "$ {:,.0f}"}), hide_index=True, width='stretch')
     with st.expander(f"8 · No presupuestadas de la semana — $ {npw['Costo'].sum():,.0f} (candidatas a cobro como adicional)"):
-        st.dataframe(npw.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"}).sort_values("Costo", ascending=False)
+        st.dataframe(marcar_plan(npw.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"}), 8, "Código", sg, ini).sort_values("Costo", ascending=False)
                      .style.format({"Horas": "{:,.1f}", "Costo": "$ {:,.0f}"}), hide_index=True, width='stretch')
+
+    # ---------- 9. Planes de mejora ----------
+    st.divider()
+    st.markdown("#### 📝 Planes de mejora")
+    if sg.empty:
+        st.info("Aún no hay planes registrados. Los residentes los escriben en el Google Sheet de Registros, pestaña **Alertas_Seguimiento** "
+                "(semana, tipo de alerta, frente, persona o código tal como aparece en esta pestaña, plan, responsable, fecha compromiso y estado).")
+    else:
+        abiertos = sg[sg["Estado"] != "Cerrada"]
+        vencidos = abiertos[abiertos["Fecha compromiso"].notna() & (abiertos["Fecha compromiso"] < hoy)]
+        q = st.columns(4)
+        q[0].metric("Planes de esta semana", int((sg["lunes"] == ini).sum()))
+        q[1].metric("Abiertos o en plan (todas las semanas)", len(abiertos))
+        q[2].metric("Vencidos", len(vencidos), delta_color="inverse")
+        q[3].metric("Cerrados", int((sg["Estado"] == "Cerrada").sum()))
+        ver = sg[(sg["lunes"] == ini) | (sg["Estado"] != "Cerrada")].copy()
+        ver["Vencido"] = np.where(ver["Fecha compromiso"].notna() & (ver["Fecha compromiso"] < hoy) & (ver["Estado"] != "Cerrada"), "⏰ Sí", "")
+        st.dataframe(ver.sort_values(["Estado", "Fecha compromiso"])[["Semana (lunes)", "Tipo de alerta", "Frente", "Persona o código", "Plan de mejora",
+                                                                       "Responsable", "Fecha compromiso", "Estado", "Vencido", "Resultado / comentario"]]
+                     .style.format({"Fecha compromiso": lambda v: "" if pd.isna(v) else f"{v:%d/%m/%Y}"}), hide_index=True, width='stretch')
+    st.caption("Para registrar un plan: en el Google Sheet de Registros, pestaña Alertas_Seguimiento, copia la semana (lunes), el tipo de alerta "
+               "y la persona o código exactamente como aparecen aquí; el dashboard marca la alerta como 'En plan' o 'Cerrada'.")
 
 
 # Vistas (7-oct-2026): GERENCIA = Resumen general + Alertas de la semana + Presupuesto vs. ejecutado.
