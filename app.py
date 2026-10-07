@@ -603,6 +603,8 @@ def mostrar_alertas(mo_base, tarifas):
     semh = w.groupby("nombre")["horas"].sum()
     sem_ex = semh[semh > U.get("horas_semana_max", 60)]
 
+    fr_persona = w.groupby(["nombre_norm", "cod_fr"])["horas"].sum().reset_index().sort_values("horas").drop_duplicates("nombre_norm", keep="last").set_index("nombre_norm")["cod_fr"]
+
     # 3. A de maestros vs. proyección
     fac = 7 / 30
     activos = pa[(pa["Inicio"].isna() | (pa["Inicio"] <= fin)) & (pa["Fin"].isna() | (pa["Fin"] >= ini))]
@@ -615,6 +617,8 @@ def mostrar_alertas(mo_base, tarifas):
     a_m["Nombre"] = a_m["Nombre"].fillna(pd.Series(dict(zip(pm["nombre_norm"], pm["Nombre en la proyección"]))))
     a_m = a_m.fillna({"Real": 0, "Proyectado": 0})
     a_m["Diferencia (real − proy.)"] = a_m["Real"] - a_m["Proyectado"]
+    a_m["Frente"] = a_m.index.map(fr_persona).fillna("—")
+    a_m["Residente"] = a_m["Frente"].map(RES).fillna("—")
     a_m["Lectura"] = np.where(a_m["Proyectado"] == 0, "Hace de maestro pero no está proyectado como maestro en la A",
                      np.where(a_m["Real"] == 0, "Proyectado sin registros esta semana", ""))
     a_real, a_proy = a_m["Real"].sum(), a_m["Proyectado"].sum()
@@ -630,13 +634,18 @@ def mostrar_alertas(mo_base, tarifas):
     }).join(po.assign(P=po["Salario total mes proyectado (con HE)"] * fac).groupby("nombre_norm")["P"].sum().rename("Proyectado en A"), how="outer").fillna(0)
     ofi["Nombre"] = ofi["Nombre"].replace(0, np.nan).fillna(pd.Series(dict(zip(po["nombre_norm"], po["Nombre en la proyección"]))))
     ofi["A sobrestimada"] = ofi["Proyectado en A"] - ofi["A (campamento)"]
+    ofi["Frente"] = ofi.index.map(fr_persona).fillna("—")
+    ofi["Residente"] = ofi["Frente"].map(RES).fillna("—")
     camp = w[w["campamento"]].groupby(["codact", "actDesc", "cod_fr"]).agg(Horas=("horas", "sum"), Personas=("nombre", "nunique"), Costo=("costo_calculado", "sum")).reset_index()
+    camp["Residente"] = camp["cod_fr"].map(RES).fillna("—")
 
     # 6. Sobrecosto de MO (acumulado hasta la semana) y posible doble pago
     acum = hasta.groupby("codact").agg(Costo_acum=("costo_calculado", "sum"))
     act_sem = w.groupby("codact").agg(Costo_sem=("costo_calculado", "sum"), Horas_sem=("horas", "sum"))
     c = act_sem.join(acum).join(mop.set_index("Código")[["Descripción", "Proy. mano de obra", "Proy. subcontratos"]], how="left")
     c = c[~c.index.str.startswith(("SUP-", "NP-"))]
+    c["Frente"] = c.index.str[:2]
+    c["Residente"] = c["Frente"].map(RES).fillna("—")
     c["% MO consumida"] = (c["Costo_acum"] / c["Proy. mano de obra"]).where(c["Proy. mano de obra"] > 0)
     sobre = c[c["% MO consumida"] >= U.get("mo_amarillo", .8)].copy()
     sobre["Semáforo"] = sobre["% MO consumida"].apply(lambda v: semaforo_txt(v, U.get("mo_amarillo", .8) - 1e-9, U.get("mo_rojo", 1.0)))
@@ -645,6 +654,7 @@ def mostrar_alertas(mo_base, tarifas):
 
     # 7. No presupuestadas
     npw = w[w["codact"].str.startswith("NP-")].groupby(["codact", "actDesc", "cod_fr"]).agg(Horas=("horas", "sum"), Costo=("costo_calculado", "sum")).reset_index()
+    npw["Residente"] = npw["cod_fr"].map(RES).fillna("—")
 
     # ---------- Resumen ----------
     k = st.columns(6)
@@ -666,31 +676,31 @@ def mostrar_alertas(mo_base, tarifas):
                      .style.format({"Horas": "{:,.1f}", "Fecha": "{:%d/%m/%Y}"}), hide_index=True, width='stretch')
         c2.dataframe(marcar_plan(sem_ex.rename("Horas en la semana").reset_index().rename(columns={"nombre": "Nombre"}), 2, "Nombre", sg, ini).sort_values("Horas en la semana", ascending=False)
                      .style.format({"Horas en la semana": "{:,.1f}"}), hide_index=True, width='stretch')
-    with st.expander(f"3 · Administración (A) de maestros — real $ {a_real:,.0f} vs proyectado $ {a_proy:,.0f}"):
-        st.dataframe(marcar_plan(a_m.reset_index(drop=True), 3, "Nombre", sg, ini)[["Nombre", "Proyectado", "Real", "Diferencia (real − proy.)", "Lectura", "Plan de mejora"]]
+    with st.expander(f"3 · Administración (A) de maestros — real \\$ {a_real:,.0f} vs proyectado \\$ {a_proy:,.0f}"):
+        st.dataframe(marcar_plan(a_m.reset_index(drop=True), 3, "Nombre", sg, ini)[["Nombre", "Frente", "Residente", "Proyectado", "Real", "Diferencia (real − proy.)", "Lectura", "Plan de mejora"]]
                      .sort_values("Diferencia (real − proy.)", ascending=False)
                      .style.format({"Proyectado": "$ {:,.0f}", "Real": "$ {:,.0f}", "Diferencia (real − proy.)": "$ {:,.0f}"}), hide_index=True, width='stretch')
         st.caption("Proyectado de la semana = salario total mes proyectado (con 40 % HE) × 7/30. Regla: todo lo que registran los maestros va a la A.")
-    with st.expander(f"4 · Oficiales y ayudantes proyectados en la A — A sobrestimada $ {ofi['A sobrestimada'].sum():,.0f} esta semana"):
-        st.dataframe(marcar_plan(ofi.reset_index(drop=True), 4, "Nombre", sg, ini)[["Nombre", "Proyectado en A", "A (campamento)", "APU (actividades)", "A sobrestimada", "Plan de mejora"]]
+    with st.expander(f"4 · Oficiales y ayudantes proyectados en la A — A sobrestimada \\$ {ofi['A sobrestimada'].sum():,.0f} esta semana"):
+        st.dataframe(marcar_plan(ofi.reset_index(drop=True), 4, "Nombre", sg, ini)[["Nombre", "Frente", "Residente", "Proyectado en A", "A (campamento)", "APU (actividades)", "A sobrestimada", "Plan de mejora"]]
                      .sort_values("A sobrestimada", ascending=False)
                      .style.format({c_: "$ {:,.0f}" for c_ in ["Proyectado en A", "A (campamento)", "APU (actividades)", "A sobrestimada"]}), hide_index=True, width='stretch')
         st.caption("Por regla, la A solo asume el trabajo de oficiales y ayudantes DENTRO del campamento; el resto se carga al APU de la actividad.")
-    with st.expander(f"5 · Trabajo dentro del campamento (va a la A) — $ {camp['Costo'].sum():,.0f}"):
+    with st.expander(f"5 · Trabajo dentro del campamento (va a la A) — \\$ {camp['Costo'].sum():,.0f}"):
         st.dataframe(marcar_plan(camp.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"}), 5, "Código", sg, ini)
                      .style.format({"Horas": "{:,.1f}", "Costo": "$ {:,.0f}"}), hide_index=True, width='stretch')
     with st.expander(f"6 · Sobrecosto de mano de obra — {len(sobre)} actividades con 80 % o más de la MO proyectada consumida"):
         st.dataframe(marcar_plan(sobre.reset_index().rename(columns={"codact": "Código", "Costo_sem": "Costo semana", "Costo_acum": "Costo acumulado"}), 6, "Código", sg, ini)
-                     [["Código", "Descripción", "Proy. mano de obra", "Costo acumulado", "% MO consumida", "Semáforo", "Exceso ($)", "Costo semana", "Plan de mejora"]]
+                     [["Código", "Descripción", "Frente", "Residente", "Proy. mano de obra", "Costo acumulado", "% MO consumida", "Semáforo", "Exceso ($)", "Costo semana", "Plan de mejora"]]
                      .sort_values("% MO consumida", ascending=False)
                      .style.format({"Proy. mano de obra": "$ {:,.0f}", "Costo acumulado": "$ {:,.0f}", "% MO consumida": "{:.0%}", "Exceso ($)": "$ {:,.0f}", "Costo semana": "$ {:,.0f}"}),
                      hide_index=True, width='stretch')
         st.caption("Ojo: muchas alertas aquí vienen de códigos mal asignados en la app; revisar con el maestro antes de concluir sobrecosto.")
-    with st.expander(f"7 · Posible doble pago — MO propia en actividades contratadas por subcontrato: $ {doble['Costo_sem'].sum():,.0f}"):
+    with st.expander(f"7 · Posible doble pago — MO propia en actividades contratadas por subcontrato: \\$ {doble['Costo_sem'].sum():,.0f}"):
         st.dataframe(marcar_plan(doble.reset_index().rename(columns={"codact": "Código", "Costo_sem": "MO propia semana", "Horas_sem": "Horas semana"}), 7, "Código", sg, ini)
-                     [["Código", "Descripción", "Proy. subcontratos", "Horas semana", "MO propia semana", "Plan de mejora"]].sort_values("MO propia semana", ascending=False)
+                     [["Código", "Descripción", "Frente", "Residente", "Proy. subcontratos", "Horas semana", "MO propia semana", "Plan de mejora"]].sort_values("MO propia semana", ascending=False)
                      .style.format({"Proy. subcontratos": "$ {:,.0f}", "Horas semana": "{:,.1f}", "MO propia semana": "$ {:,.0f}"}), hide_index=True, width='stretch')
-    with st.expander(f"8 · No presupuestadas de la semana — $ {npw['Costo'].sum():,.0f} (candidatas a cobro como adicional)"):
+    with st.expander(f"8 · No presupuestadas de la semana — \\$ {npw['Costo'].sum():,.0f} (candidatas a cobro como adicional)"):
         st.dataframe(marcar_plan(npw.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"}), 8, "Código", sg, ini).sort_values("Costo", ascending=False)
                      .style.format({"Horas": "{:,.1f}", "Costo": "$ {:,.0f}"}), hide_index=True, width='stretch')
 
@@ -729,11 +739,11 @@ def mostrar_alertas(mo_base, tarifas):
         "Horas extra": he_alert[["Nombre", "Cargo", "Frente principal", "Residente", "Días", "Horas", "Horas extra/recargo", "% HE", "Semáforo", "Exceso sobre lo proyectado ($)", "Plan de mejora"]],
         "Jornadas >12h": dia_ex.rename(columns={"nombre": "Nombre", "fecha": "Fecha", "horas": "Horas"}),
         "Semanas >60h": sem_ex.rename("Horas en la semana").reset_index().rename(columns={"nombre": "Nombre"}),
-        "A maestros": a_m.reset_index(drop=True)[["Nombre", "Proyectado", "Real", "Diferencia (real − proy.)", "Lectura"]],
-        "Of-ayud en A": ofi.reset_index(drop=True)[["Nombre", "Proyectado en A", "A (campamento)", "APU (actividades)", "A sobrestimada"]],
+        "A maestros": a_m.reset_index(drop=True)[["Nombre", "Frente", "Residente", "Proyectado", "Real", "Diferencia (real − proy.)", "Lectura"]],
+        "Of-ayud en A": ofi.reset_index(drop=True)[["Nombre", "Frente", "Residente", "Proyectado en A", "A (campamento)", "APU (actividades)", "A sobrestimada"]],
         "Campamento": camp.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"}),
-        "Sobrecosto MO": sobre.reset_index().rename(columns={"codact": "Código", "Costo_sem": "Costo semana", "Costo_acum": "Costo acumulado"})[["Código", "Descripción", "Proy. mano de obra", "Costo acumulado", "% MO consumida", "Semáforo", "Exceso ($)", "Costo semana"]],
-        "Doble pago": doble.reset_index().rename(columns={"codact": "Código", "Costo_sem": "MO propia semana", "Horas_sem": "Horas semana"})[["Código", "Descripción", "Proy. subcontratos", "Horas semana", "MO propia semana"]],
+        "Sobrecosto MO": sobre.reset_index().rename(columns={"codact": "Código", "Costo_sem": "Costo semana", "Costo_acum": "Costo acumulado"})[["Código", "Descripción", "Frente", "Residente", "Proy. mano de obra", "Costo acumulado", "% MO consumida", "Semáforo", "Exceso ($)", "Costo semana"]],
+        "Doble pago": doble.reset_index().rename(columns={"codact": "Código", "Costo_sem": "MO propia semana", "Horas_sem": "Horas semana"})[["Código", "Descripción", "Frente", "Residente", "Proy. subcontratos", "Horas semana", "MO propia semana"]],
         "No presupuestadas": npw.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"}),
         "Planes de mejora": sg[[c_ for c_ in COLS_SEG if c_ in sg.columns]] if not sg.empty else pd.DataFrame(columns=COLS_SEG),
     }
