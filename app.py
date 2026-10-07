@@ -865,6 +865,342 @@ def mostrar_alertas(mo_base, tarifas):
                "y la persona o código exactamente como aparecen aquí. El plan sigue apareciendo las semanas siguientes hasta que lo marques 'Cerrada'.")
 
 
+# ============ PRESUPUESTO VS. EJECUTADO (7-oct-2026) ============
+# Fuentes (Drive, "cualquier persona con el enlace"; se actualizan con "Subir nueva versión"):
+#   - Programación / curva S (hoja AVANCE SEMANA A SEMANA)
+#   - Cortes para SINCO (hoja PPTO): venta y facturado por ítem
+#   - Parametros_Alertas: pestaña Cortes (fecha de cada corte) y MO_proyectada (costo proyectado y MO del APU)
+URL_PROGRAMACION = "https://drive.google.com/uc?export=download&id=1VZr9GvsMjxG5rmw58Tb9GGIpNBHytGnx"
+URL_CORTES = "https://drive.google.com/uc?export=download&id=1sI0-Hct9xogJHFhjbT4HDRhFK5xsMiLw"
+# Intervención de la programación "(6) ..." -> código de frente SINCO
+INTERV_A_FRENTE = {"3": "01", "3A": "02", "3B": "03", "4": "04", "5": "05", "5A": "06", "5B": "07", "6": "08",
+                   "7": "09", "8": "10", "9": "11", "10": "12", "11": "13", "13": "14", "14": "15", "15": "16", "16": "17"}
+NOMBRE_FRENTE = {"01": "3 - Check in", "02": "3A - Equipaje saliendo BHS", "03": "3B - Filtro seg. internacional",
+                 "04": "4 - Filtro seg. nacional", "05": "5 - Sala embarque remota", "06": "5A - Equipaje llegando",
+                 "07": "5B - Sala de espera actual", "08": "6 - Plataforma fase 1", "09": "7 - Nuevo centro conexiones",
+                 "10": "8 - Inmigración", "11": "9 - Emigración", "12": "10 - Plataforma fase 2",
+                 "13": "11 y 12 - Segundo filtro", "14": "13 - Dobles lectoras", "15": "14 - Guía socioambiental",
+                 "16": "15 - Guía SST-SMS", "17": "16 - PMT"}
+FRENTES_GUIAS = {"15", "16", "17"}  # su MO es personal profesional que no se registra en la app
+
+
+_MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+
+
+def _f(d, anio=False):
+    """Fecha corta en español: 24-sep (o 24-sep-2026)."""
+    if d is None or pd.isna(d):
+        return "—"
+    return f"{d.day:02d}-{_MES[d.month-1]}" + (f"-{d.year}" if anio else "")
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return np.nan
+
+
+def _leer_xlsx(url, hoja):
+    import io, urllib.request, openpyxl
+    with urllib.request.urlopen(url, timeout=120) as r:
+        b = r.read()
+    wb = openpyxl.load_workbook(io.BytesIO(b), read_only=True, data_only=True)
+    return list(wb[hoja].iter_rows(values_only=True))
+
+
+@st.cache_data(ttl=3600, show_spinner="Leyendo la programación (curva S)...")
+def cargar_programacion():
+    rows = _leer_xlsx(URL_PROGRAMACION, "AVANCE SEMANA A SEMANA")
+    h2 = rows[1]
+    semanas = []
+    c = 10
+    while c < len(h2) and h2[c] is not None:
+        f = pd.Timestamp(h2[c]).normalize()
+        semanas.append((f, c))
+        c += 8
+    regs = []
+    for r in rows[5:]:
+        if r[1] is None:
+            continue
+        wbs = str(r[1]).strip()
+        nombre = str(r[2] if r[2] is not None else (r[3] or "")).strip()
+        for f, c in semanas:
+            regs.append((wbs, nombre, _num(r[5]), f, _num(r[c + 3]), _num(r[c + 7]), _num(r[c + 2]), _num(r[c + 6])))
+    P = pd.DataFrame(regs, columns=["wbs", "nombre", "costo", "semana", "PV", "EV", "PV_fis", "EV_fis"])
+    P["nivel"] = np.where(P["wbs"] == "0", 0, P["wbs"].str.count(r"\.") + 1)
+    interv = P["nombre"].str.extract(r"^\((\w+)\)")[0]
+    P["fr"] = np.where(P["nivel"] == 1, interv.map(INTERV_A_FRENTE), None)
+    return P
+
+
+@st.cache_data(ttl=3600, show_spinner="Leyendo los cortes de obra...")
+def cargar_cortes():
+    rows = _leer_xlsx(URL_CORTES, "PPTO")
+    h1, h3 = rows[0], rows[2]
+    cols = {}
+    for i, v in enumerate(h1):
+        if isinstance(v, str) and v.strip().upper().startswith("CORTE"):
+            k = int(re.findall(r"\d+", v)[0])
+            cc = cs = None
+            for j in range(i, min(i + 6, len(h3))):
+                t = str(h3[j] or "").strip().upper()
+                if t == "CANT" and cc is None:
+                    cc = j
+                elif t == "SUBTOTAL" and cs is None:
+                    cs = j
+            if cc is not None and cs is not None:
+                cols[k] = (cc, cs)
+    total_fila = None
+    regs = []
+    for r in rows[4:]:
+        cod = str(r[0]).strip() if r[0] is not None else ""
+        if total_fila is None and cod and not re.match(r"^\d\d(\.\d\d)+$", cod):
+            total_fila = r
+        if not re.match(r"^\d\d(\.\d\d)+$", cod) or str(r[1] or "").strip().upper() == "TITULOS":
+            continue
+        d = {"cod": cod, "desc": r[2], "und": r[4], "cant": _num(r[3]), "pu": _num(r[5]), "venta": _num(r[6])}
+        for k, (cc, cs) in cols.items():
+            d[f"q{k}"] = _num(r[cc])
+            d[f"v{k}"] = _num(r[cs])
+        regs.append(d)
+    C = pd.DataFrame(regs).fillna({c: 0 for c in [f"v{k}" for k in cols] + [f"q{k}" for k in cols] + ["venta", "cant"]})
+    # solo ítems sin hijos (las filas título con valor duplicarían)
+    cods = set(C["cod"])
+    C = C[~C["cod"].apply(lambda x: any(o.startswith(x + ".") for o in cods))].copy()
+    total_archivo = _num(total_fila[6]) if total_fila is not None else np.nan
+    return C, sorted(cols), total_archivo
+
+
+def _fechas_cortes():
+    try:
+        x = pd.read_excel(URL_PARAMS, sheet_name="Cortes")
+        x = x.rename(columns={x.columns[0]: "Corte", x.columns[1]: "Fecha"})
+        x["Corte"] = pd.to_numeric(x["Corte"], errors="coerce")
+        x["Fecha"] = pd.to_datetime(x["Fecha"], errors="coerce", dayfirst=True)
+        x = x.dropna().astype({"Corte": int}).sort_values("Corte")
+        return dict(zip(x["Corte"], x["Fecha"]))
+    except Exception:
+        return {}
+
+
+def mostrar_presupuesto(mo_base):
+    try:
+        P = cargar_programacion()
+        C, cortes, total_archivo = cargar_cortes()
+    except Exception as e:
+        st.error(f"No se pudieron leer los archivos de programación o de cortes en Drive ({e}). "
+                 "Revisa que sigan compartidos como 'Cualquier persona con el enlace'.")
+        return
+    _, mop, _, _ = cargar_parametros()
+    FEC = _fechas_cortes()
+
+    # ---- semana de corte de la programación: la última con ejecutado, sin pasar de hoy
+    hoy = pd.Timestamp.today().normalize()
+    top = P[P["wbs"] == "0"].set_index("semana").sort_index()
+    con_ev = top[(top["EV"] > 0) & (top.index <= hoy)]
+    if con_ev.empty:
+        st.warning("La programación no tiene semanas con ejecutado.")
+        return
+    sem = con_ev.index.max()
+    L1 = P[(P["nivel"] == 1) & P["fr"].notna()]
+    fr_sem = L1[L1["semana"] == sem].groupby("fr")[["costo", "PV", "EV"]].sum()
+
+    # ---- cortes: facturado por ítem y por frente; último corte con valor
+    cortes_con_valor = [k for k in cortes if C[f"v{k}"].abs().sum() > 0]
+    ult = max(cortes_con_valor) if cortes_con_valor else None
+    C["facturado"] = C[[f"v{k}" for k in cortes_con_valor]].sum(axis=1) if cortes_con_valor else 0.0
+    C["fr"] = C["cod"].str[:2]
+    M = mop.rename(columns={"Código": "cod", "Proyectado total": "proy", "Proy. mano de obra": "pMO", "Frente": "frS"})[["cod", "frS", "proy", "pMO"]]
+    M["frS"] = M["frS"].astype(str).str.strip().str.zfill(2)
+    M["proy"] = pd.to_numeric(M["proy"], errors="coerce").fillna(0)
+    M["pMO"] = pd.to_numeric(M["pMO"], errors="coerce").fillna(0)
+    I = C.merge(M.drop(columns="frS"), on="cod", how="left").fillna({"proy": 0, "pMO": 0})
+    I["pct_fact"] = np.where(I["venta"] > 0, I["facturado"] / I["venta"], 0)
+
+    venta = I["venta"].sum()
+    proy_total = M["proy"].sum()
+    PV, EV = top.loc[sem, "PV"], top.loc[sem, "EV"]
+    fact = I["facturado"].sum()
+
+    st.subheader("Presupuesto vs. ejecutado")
+    txt_corte = f"corte {ult}" + (f" ({_f(FEC[ult], True)})" if ult in FEC else "") if ult else "sin cortes"
+    st.caption(f"Programación al {_f(sem, True)} · facturado hasta el {txt_corte} · costo proyectado y MO del APU de SINCO "
+               "(Parametros_Alertas) · MO real de la app. Valores en costo directo, sin AIU ni IVA.")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Contrato (costo directo)", f"$ {venta/1e6:,.0f} M")
+    k1.caption(f"Utilidad prevista: $ {(venta - proy_total)/1e6:,.0f} M ({(venta - proy_total)/venta:.1%})")
+    k2.metric(f"Programado al {_f(sem)}", f"$ {PV/1e6:,.0f} M")
+    k2.caption(f"{PV/venta:.1%} de la obra")
+    k3.metric(f"Ejecutado al {_f(sem)}", f"$ {EV/1e6:,.0f} M")
+    k3.caption(f"{'Atraso' if EV < PV else 'Adelanto'} de $ {abs(EV-PV)/1e6:,.0f} M · índice {EV/PV:.2f} (1,00 = al día)")
+    k4.metric("Facturado (cortes)", f"$ {fact/1e6:,.0f} M")
+    k4.caption(f"{fact/venta:.1%} del contrato · ejecutado sin facturar $ {(EV-fact)/1e6:,.0f} M")
+    if not np.isnan(total_archivo) and abs(venta - total_archivo) > 1000:
+        st.warning(f"La suma de ítems de la hoja de cortes ($ {venta:,.0f}) no cuadra con su fila total ($ {total_archivo:,.0f}). Revisa filas título con valor.")
+
+    # ---- curva S
+    cs = top.reset_index()[["semana", "PV", "EV"]].copy()
+    cs.loc[cs["semana"] > sem, "EV"] = np.nan
+    cs = cs.melt(id_vars="semana", var_name="serie", value_name="valor")
+    cs["serie"] = cs["serie"].map({"PV": "Programado", "EV": "Ejecutado"})
+    fac = []
+    acum = 0.0
+    for k in cortes_con_valor:
+        acum += C[f"v{k}"].sum()
+        if k in FEC:
+            fac.append({"semana": FEC[k], "serie": "Facturado (cortes)", "valor": acum})
+    cs = pd.concat([cs, pd.DataFrame(fac)], ignore_index=True)
+    cs["valor_M"] = cs["valor"] / 1e6
+    fig = px.line(cs.dropna(subset=["valor"]), x="semana", y="valor_M", color="serie", markers=False,
+                  labels={"semana": "", "valor_M": "Millones de pesos (acumulado)", "serie": ""},
+                  color_discrete_map={"Programado": "#94A3B8", "Ejecutado": "#1F3A5F", "Facturado (cortes)": "#D97706"})
+    fig.update_traces(selector=dict(name="Facturado (cortes)"), mode="lines+markers", line_shape="hv")
+    fig.add_vline(x=sem, line_dash="dot", line_color="#64748B")
+    fig.update_layout(height=380, legend=dict(orientation="h", y=1.08), margin=dict(l=10, r=10, t=30, b=10))
+    st.plotly_chart(fig, width='stretch')
+    if not FEC:
+        st.caption("⚠️ No encontré la pestaña Cortes en Parametros_Alertas: la línea de facturado no se puede ubicar en el tiempo.")
+
+    # ---- por frente
+    mo_app = mo_base.copy()
+    mo_app["cod"] = mo_app["codact"].astype(str).str.strip()
+    np_sup = mo_app["cod"].str.extract(r"^(?:NP|SUP)-(\d\d)")[0]
+    fr_cod = mo_app["cod"].where(mo_app["cod"].str.match(r"^\d\d\."))
+    fr_app = pd.to_numeric(mo_app.get("codfrente"), errors="coerce").astype("Int64").astype(str).str.zfill(2)
+    mo_app["fr"] = fr_cod.str[:2].fillna(np_sup).fillna(fr_app)
+    mo_fr = mo_app.groupby("fr")["costo_calculado"].sum()
+    g = I.groupby("fr").agg(venta=("venta", "sum"), facturado=("facturado", "sum"))
+    g = g.join(M.groupby("frS")[["proy", "pMO"]].sum(), how="left").fillna({"proy": 0, "pMO": 0})
+    F = g.join(fr_sem[["PV", "EV"]], how="left").fillna({"PV": 0, "EV": 0})
+    F = F[F.index.isin(NOMBRE_FRENTE)]
+    F["Frente"] = [f"{i} · {NOMBRE_FRENTE[i]}" for i in F.index]
+    F["Utilidad prevista"] = F["venta"] - F["proy"]
+    F["Índice avance"] = np.where(F["PV"] > 0, F["EV"] / F["PV"], np.nan)
+    F["Atraso(−)/adelanto(+)"] = F["EV"] - F["PV"]
+    F["Ejecutado sin facturar"] = F["EV"] - F["facturado"]
+    F["MO ganada (APU × % ejecutado)"] = np.where(F["venta"] > 0, F["EV"] / F["venta"] * F["pMO"], 0)
+    F["MO app"] = mo_fr.reindex(F.index).fillna(0)
+
+    def lectura(r):
+        msgs = []
+        if r["proy"] > r["venta"]:
+            msgs.append("🔴 costo proyectado mayor que la venta")
+        if r["facturado"] > r["EV"] * 1.02 and r["facturado"] - r["EV"] > 10e6:
+            msgs.append("🟠 facturado mayor que lo ejecutado")
+        if r.name not in FRENTES_GUIAS:
+            if r["pMO"] <= 0 and r["MO app"] > 0:
+                msgs.append("🔴 MO propia en frente sin MO en el APU")
+            elif r["MO ganada (APU × % ejecutado)"] > 0 and r["MO app"] > r["MO ganada (APU × % ejecutado)"]:
+                msgs.append("🔴 MO de la app ya supera la MO ganada desde el inicio")
+        if not np.isnan(r["Índice avance"]) and r["Índice avance"] < 0.9:
+            msgs.append("🟠 atrasado")
+        return " · ".join(msgs) if msgs else "🟢"
+    F["Lectura"] = F.apply(lectura, axis=1)
+    st.markdown("#### Por frente")
+    T = F[["Frente", "venta", "proy", "Utilidad prevista", "PV", "EV", "Índice avance", "Atraso(−)/adelanto(+)", "facturado",
+           "Ejecutado sin facturar", "MO ganada (APU × % ejecutado)", "MO app", "Lectura"]].rename(columns={
+        "venta": "Venta CD", "proy": "Costo proyectado", "PV": "Programado", "EV": "Ejecutado", "facturado": "Facturado"})
+    mon = {c: "{:,.0f}" for c in T.columns if c not in ("Frente", "Índice avance", "Lectura")}
+    st.dataframe(T.style.format(mon | {"Índice avance": "{:.2f}"}, na_rep="—"), hide_index=True, width='stretch')
+    st.caption("Índice avance = ejecutado ÷ programado (1,00 = al día). MO ganada = lo que el APU paga de mano de obra propia por el % ejecutado del frente. "
+               "La MO de la app solo existe desde el 17-ago, así que si ya supera la ganada el sobrecosto es seguro. "
+               "En las guías (14, 15, 16) la MO es personal profesional que no pasa por la app.")
+
+    # ---- MO por periodo de corte, ítem por ítem
+    st.markdown("#### Mano de obra propia vs. lo facturado, por periodo de corte")
+    cortes_fechados = [k for k in cortes_con_valor if k in FEC and (k - 1) in FEC]
+    if not cortes_fechados:
+        st.info("Para este análisis hacen falta las fechas de corte en la pestaña Cortes de Parametros_Alertas.")
+    else:
+        opciones = {f"Corte {k}: {_f(FEC[k-1] + pd.Timedelta(days=1))} → {_f(FEC[k])}": [k] for k in cortes_fechados}
+        for a, b in zip(cortes_fechados, cortes_fechados[1:]):
+            opciones[f"Cortes {a} y {b}: {_f(FEC[a-1] + pd.Timedelta(days=1))} → {_f(FEC[b])}"] = [a, b]
+        claves = list(opciones)
+        mo_min = mo_app["fecha"].min()
+        validas = [c for c in claves if FEC[opciones[c][0] - 1] + pd.Timedelta(days=1) >= mo_min - pd.Timedelta(days=7)]
+        lista = validas or claves
+        cubiertas = [i for i, c in enumerate(lista) if FEC[opciones[c][-1]] <= mo_app["fecha"].max() + pd.Timedelta(days=1)]
+        sel = st.selectbox("Periodo", lista, index=(cubiertas[-1] if cubiertas else len(lista) - 1),
+                           help="Solo tiene sentido desde que la app tiene registros (17-ago).")
+        ks = opciones[sel]
+        d_ini = FEC[ks[0] - 1] + pd.Timedelta(days=1)
+        d_fin = FEC[ks[-1]]
+        st.caption(f"Facturado en {'el corte' if len(ks) == 1 else 'los cortes'} {' y '.join(map(str, ks))} contra MO registrada en la app del "
+                   f"{_f(d_ini)} al {_f(d_fin)}. Último registro de la app: {_f(mo_app['fecha'].max())}.")
+        J = I.copy()
+        J["fact_per"] = J[[f"v{k}" for k in ks]].sum(axis=1)
+        J["fact_antes"] = J[[f"v{k}" for k in cortes_con_valor if k < ks[0]]].sum(axis=1) if any(k < ks[0] for k in cortes_con_valor) else 0.0
+        J["pct_antes"] = np.where(J["venta"] > 0, J["fact_antes"] / J["venta"], 0)
+        J["mo_ganada"] = np.where(J["venta"] > 0, J["fact_per"] / J["venta"], 0) * J["pMO"]
+        mper = mo_app[(mo_app["fecha"] >= d_ini) & (mo_app["fecha"] <= d_fin)]
+        J = J.merge(mper.groupby("cod")["costo_calculado"].sum().rename("mo_app"), on="cod", how="outer")
+        J = J.fillna({c: 0 for c in ["fact_per", "mo_ganada", "mo_app", "pMO", "pct_antes", "venta"]})
+        J["fr"] = J["fr"].fillna(J["cod"].str[:2])
+        J = J[(J["mo_app"] > 0) | (J["mo_ganada"] > 0)]
+
+        def grupo(r):
+            if r["fr"] in FRENTES_GUIAS:
+                return "Guías (no comparable)"
+            if r["pMO"] <= 0:
+                return "APU sin MO propia (subcontrato, no presupuestada, supervisión)"
+            if r["pct_antes"] >= 0.999:
+                return "Ítem ya facturado al 100% antes del periodo"
+            if r["fact_per"] <= 0:
+                return "Obra en proceso: sin facturar en el periodo"
+            return "Facturado en el periodo"
+        J["Grupo"] = J.apply(grupo, axis=1)
+        R = J.groupby("Grupo").agg(**{"Ítems": ("cod", "size"), "MO que paga el APU": ("mo_ganada", "sum"),
+                                      "MO en la app": ("mo_app", "sum")}).reset_index()
+        orden = ["Facturado en el periodo", "Obra en proceso: sin facturar en el periodo", "Ítem ya facturado al 100% antes del periodo",
+                 "APU sin MO propia (subcontrato, no presupuestada, supervisión)", "Guías (no comparable)"]
+        R["o"] = R["Grupo"].map({g: i for i, g in enumerate(orden)})
+        R = R.sort_values("o").drop(columns="o")
+        c1, c2 = st.columns([3, 2])
+        c1.dataframe(R.style.format({"MO que paga el APU": "{:,.0f}", "MO en la app": "{:,.0f}"}), hide_index=True, width='stretch')
+        c2.metric("MO registrada en la app", f"$ {J['mo_app'].sum()/1e6:,.1f} M")
+        c2.metric("MO que paga el APU por lo facturado", f"$ {J.loc[~J['fr'].isin(FRENTES_GUIAS), 'mo_ganada'].sum()/1e6:,.1f} M")
+        c2.caption("Sin contar las guías.")
+        with st.expander("Detalle por ítem"):
+            g_sel = st.multiselect("Grupos", orden, default=["Ítem ya facturado al 100% antes del periodo", "Facturado en el periodo"])
+            D = J[J["Grupo"].isin(g_sel)].copy()
+            D["Diferencia (APU − app)"] = D["mo_ganada"] - D["mo_app"]
+            D["Frente"] = D["fr"].map(NOMBRE_FRENTE)
+            D = D.sort_values("Diferencia (APU − app)")[["cod", "Frente", "desc", "Grupo", "pct_antes", "fact_per", "mo_ganada", "mo_app", "Diferencia (APU − app)"]]
+            D = D.rename(columns={"cod": "Código", "desc": "Descripción", "pct_antes": "% facturado antes", "fact_per": "Facturado en el periodo",
+                                  "mo_ganada": "MO que paga el APU", "mo_app": "MO en la app"})
+            st.dataframe(D.style.format({"% facturado antes": "{:.0%}", "Facturado en el periodo": "{:,.0f}", "MO que paga el APU": "{:,.0f}",
+                                         "MO en la app": "{:,.0f}", "Diferencia (APU − app)": "{:,.0f}"}), hide_index=True, width='stretch')
+
+    # ---- atraso por actividad
+    with st.expander(f"Actividades con mayor atraso al {_f(sem)}"):
+        ws_ = set(P["wbs"].unique())
+        Ls = P[(P["semana"] == sem) & (P["wbs"] != "0")].copy()
+        Ls = Ls[~Ls["wbs"].apply(lambda w: any(o.startswith(w + ".") for o in ws_))]
+        Ls["Atraso(−)/adelanto(+)"] = Ls["EV"].fillna(0) - Ls["PV"].fillna(0)
+        nom = dict(P[P["semana"] == sem][["wbs", "nombre"]].values)
+        Ls["Frente / grupo"] = Ls["wbs"].apply(lambda w: " > ".join(nom.get(".".join(w.split(".")[:i]), "") for i in range(1, min(3, len(w.split("."))))))
+        A_ = Ls.sort_values("Atraso(−)/adelanto(+)").head(20)[["wbs", "Frente / grupo", "nombre", "PV", "EV", "Atraso(−)/adelanto(+)"]]
+        A_ = A_.rename(columns={"wbs": "EDT", "nombre": "Actividad", "PV": "Programado", "EV": "Ejecutado"})
+        st.dataframe(A_.style.format({c: "{:,.0f}" for c in ["Programado", "Ejecutado", "Atraso(−)/adelanto(+)"]}), hide_index=True, width='stretch')
+
+    # ---- calidad de los archivos
+    avisos = []
+    sobre = I[(I["cant"] > 0) & (I[[f"q{k}" for k in cortes_con_valor]].sum(axis=1) > I["cant"] * 1.0001)]
+    for _, r in sobre.iterrows():
+        avisos.append(f"Ítem {r['cod']}: facturada {r[[f'q{k}' for k in cortes_con_valor]].sum():,.2f} {r['und']} contra {r['cant']:,.2f} del contrato.")
+    sin_fecha = [k for k in cortes_con_valor if k not in FEC]
+    if sin_fecha:
+        avisos.append(f"Cortes sin fecha en la pestaña Cortes: {', '.join(map(str, sin_fecha))}.")
+    fut = top[(top.index > hoy) & (top["EV"] > 0)]
+    if not fut.empty:
+        avisos.append(f"La programación tiene 'ejecutado' en semanas futuras ({', '.join(f'{_f(d)}' for d in fut.index)}); no se tienen en cuenta.")
+    if avisos:
+        with st.expander(f"⚠️ Datos para revisar en los archivos ({len(avisos)})"):
+            for a in avisos:
+                st.markdown(f"- {a}")
+
+
 # Vistas (7-oct-2026): GERENCIA = Resumen general + Alertas de la semana + Presupuesto vs. ejecutado.
 # CONTROL INTERNO (control de costos y residentes) = Cobertura, Códigos por persona, Productividad, Cargo vs. tarea.
 if VISTA_GERENCIA:
@@ -876,10 +1212,7 @@ if VISTA_GERENCIA:
     with tabA:
         mostrar_alertas(mo[mo["frente"].isin(frente_sel)] if frente_sel else mo, tarifas)
     with tabP:
-        st.subheader("Presupuesto vs. ejecutado por frente")
-        st.info(
-            "🛠️ En construcción. Valor proyectado (SINCO) contra mano de obra + equipos ejecutados, por frente y por actividad."
-        )
+        mostrar_presupuesto(mo)
 
 # ============ TAB RESUMEN EJECUTIVO SEMANAL ============
 if VISTA_GERENCIA:
