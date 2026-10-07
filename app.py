@@ -1014,7 +1014,7 @@ def mostrar_presupuesto(mo_base):
     M = mop.rename(columns={"Código": "cod", "Proyectado total": "proy", "Proy. mano de obra": "pMO", "Frente": "frS"})[["cod", "frS", "proy", "pMO"]]
     M["frS"] = M["frS"].astype(str).str.strip().str.zfill(2)
     M["proy"] = pd.to_numeric(M["proy"], errors="coerce").fillna(0)
-    M["pMO"] = pd.to_numeric(M["pMO"], errors="coerce").fillna(0)
+    M["pMO"] = pd.to_numeric(M["pMO"], errors="coerce").fillna(0).clip(lower=0)
     I = C.merge(M.drop(columns="frS"), on="cod", how="left").fillna({"proy": 0, "pMO": 0})
     I["pct_fact"] = np.where(I["venta"] > 0, I["facturado"] / I["venta"], 0)
 
@@ -1062,7 +1062,10 @@ def mostrar_presupuesto(mo_base):
     if not FEC:
         st.caption("⚠️ No encontré la pestaña Cortes en Parametros_Alertas: la línea de facturado no se puede ubicar en el tiempo.")
 
-    # ---- por frente
+    # ---- datos comunes: MO de la app por código y frente, residentes, umbrales
+    _, _, U, rs = cargar_parametros()
+    RES = dict(zip(rs["Cód. frente"], rs["Residente(s)"].fillna("—")))
+    MO_AM, MO_RO = float(U.get("mo_amarillo", 0.8)), float(U.get("mo_rojo", 1.0))
     mo_app = mo_base.copy()
     mo_app["cod"] = mo_app["codact"].astype(str).str.strip()
     np_sup = mo_app["cod"].str.extract(r"^(?:NP|SUP)-(\d\d)")[0]
@@ -1070,119 +1073,199 @@ def mostrar_presupuesto(mo_base):
     fr_app = pd.to_numeric(mo_app.get("codfrente"), errors="coerce").astype("Int64").astype(str).str.zfill(2)
     mo_app["fr"] = fr_cod.str[:2].fillna(np_sup).fillna(fr_app)
     mo_fr = mo_app.groupby("fr")["costo_calculado"].sum()
+
     g = I.groupby("fr").agg(venta=("venta", "sum"), facturado=("facturado", "sum"))
     g = g.join(M.groupby("frS")[["proy", "pMO"]].sum(), how="left").fillna({"proy": 0, "pMO": 0})
     F = g.join(fr_sem[["PV", "EV"]], how="left").fillna({"PV": 0, "EV": 0})
-    F = F[F.index.isin(NOMBRE_FRENTE)]
-    F["Frente"] = [f"{i} · {NOMBRE_FRENTE[i]}" for i in F.index]
-    F["Utilidad prevista"] = F["venta"] - F["proy"]
-    F["Índice avance"] = np.where(F["PV"] > 0, F["EV"] / F["PV"], np.nan)
-    F["Atraso(−)/adelanto(+)"] = F["EV"] - F["PV"]
-    F["Ejecutado sin facturar"] = F["EV"] - F["facturado"]
-    F["MO ganada (APU × % ejecutado)"] = np.where(F["venta"] > 0, F["EV"] / F["venta"] * F["pMO"], 0)
-    F["MO app"] = mo_fr.reindex(F.index).fillna(0)
+    F = F[F.index.isin(NOMBRE_FRENTE)].copy()
+    F["avance"] = np.where(F["PV"] > 0, F["EV"] / F["PV"], np.nan)
+    F["mo_ganada"] = np.where(F["venta"] > 0, F["EV"] / F["venta"] * F["pMO"], 0)
+    F["mo_app"] = mo_fr.reindex(F.index).fillna(0)
+    F["uso_mo"] = np.where(F["mo_ganada"] > 0, F["mo_app"] / F["mo_ganada"], np.nan)
 
-    def lectura(r):
-        msgs = []
-        if r["proy"] > r["venta"]:
-            msgs.append("🔴 costo proyectado mayor que la venta")
-        if r["facturado"] > r["EV"] * 1.02 and r["facturado"] - r["EV"] > 10e6:
-            msgs.append("🟠 facturado mayor que lo ejecutado")
+    # ================= 1. RESUMEN POR FRENTE (compacto) =================
+    st.markdown("#### Resumen por frente")
+
+    def s_avance(v):
+        if np.isnan(v):
+            return "—"
+        return f"{'🔴' if v < 0.8 else '🟠' if v < 0.95 else '🟢'} {v:.0%}"
+
+    def s_mo(r):
+        if r.name in FRENTES_GUIAS:
+            return "no aplica"
+        if r["pMO"] <= 0 and r["mo_app"] > 0:
+            return "🔴 sin MO en APU"
+        if np.isnan(r["uso_mo"]):
+            return "—"
+        return f"{'🔴' if r['uso_mo'] >= MO_RO else '🟠' if r['uso_mo'] >= MO_AM else '🟢'} {r['uso_mo']:.0%}"
+
+    def alerta(r):
+        a = []
         if r.name not in FRENTES_GUIAS:
-            if r["pMO"] <= 0 and r["MO app"] > 0:
-                msgs.append("🔴 MO propia en frente sin MO en el APU")
-            elif r["MO ganada (APU × % ejecutado)"] > 0 and r["MO app"] > r["MO ganada (APU × % ejecutado)"]:
-                msgs.append("🔴 MO de la app ya supera la MO ganada desde el inicio")
-        if not np.isnan(r["Índice avance"]) and r["Índice avance"] < 0.9:
-            msgs.append("🟠 atrasado")
-        return " · ".join(msgs) if msgs else "🟢"
-    F["Lectura"] = F.apply(lectura, axis=1)
-    st.markdown("#### Por frente")
-    T = F[["Frente", "venta", "proy", "Utilidad prevista", "PV", "EV", "Índice avance", "Atraso(−)/adelanto(+)", "facturado",
-           "Ejecutado sin facturar", "MO ganada (APU × % ejecutado)", "MO app", "Lectura"]].rename(columns={
-        "venta": "Venta CD", "proy": "Costo proyectado", "PV": "Programado", "EV": "Ejecutado", "facturado": "Facturado"})
-    mon = {c: "{:,.0f}" for c in T.columns if c not in ("Frente", "Índice avance", "Lectura")}
-    st.dataframe(T.style.format(mon | {"Índice avance": "{:.2f}"}, na_rep="—"), hide_index=True, width='stretch')
-    st.caption("Índice avance = ejecutado ÷ programado (1,00 = al día). MO ganada = lo que el APU paga de mano de obra propia por el % ejecutado del frente. "
-               "La MO de la app solo existe desde el 17-ago, así que si ya supera la ganada el sobrecosto es seguro. "
-               "En las guías (14, 15, 16) la MO es personal profesional que no pasa por la app.")
+            if r["pMO"] <= 0 and r["mo_app"] > 0:
+                a.append("MO propia en frente subcontratado")
+            elif not np.isnan(r["uso_mo"]) and r["uso_mo"] >= MO_RO:
+                a.append("MO ya pasó lo que paga el APU")
+        if not np.isnan(r["avance"]) and r["avance"] < 0.8:
+            a.append("atraso fuerte")
+        if r["proy"] > r["venta"]:
+            a.append("costo proyectado > venta")
+        if r["facturado"] - r["EV"] > 10e6:
+            a.append("facturado > ejecutado")
+        return " · ".join(a) if a else "—"
 
-    # ---- MO por periodo de corte, ítem por ítem
-    st.markdown("#### Mano de obra propia vs. lo facturado, por periodo de corte")
+    R1 = pd.DataFrame({
+        "Frente": [NOMBRE_FRENTE[i] for i in F.index],
+        "Residente": [RES.get(i, "—") for i in F.index],
+        "Avance vs. programado": F["avance"].map(s_avance).values,
+        "Atraso ($ M)": ((F["EV"] - F["PV"]) / 1e6).round(0).values,
+        "Ejecutado sin facturar ($ M)": ((F["EV"] - F["facturado"]) / 1e6).round(0).values,
+        "MO gastada ($ M)": (F["mo_app"] / 1e6).round(1).values,
+        "MO que paga el APU ($ M)": (F["mo_ganada"] / 1e6).round(1).values,
+        "MO usada": F.apply(s_mo, axis=1).values,
+        "Alerta": F.apply(alerta, axis=1).values,
+    })
+    R1 = R1[(F["EV"].values > 0) | (F["mo_app"].values > 0)]
+    st.dataframe(R1.style.format({"Atraso ($ M)": "{:,.0f}", "Ejecutado sin facturar ($ M)": "{:,.0f}",
+                                  "MO gastada ($ M)": "{:,.1f}", "MO que paga el APU ($ M)": "{:,.1f}"}),
+                 hide_index=True, width='stretch')
+    st.caption(f"**Avance** = ejecutado ÷ programado (🟢 ≥ 95 %, 🟠 80–95 %, 🔴 < 80 %). "
+               f"**MO usada** = MO gastada según la app ÷ MO que el APU paga por lo ejecutado del frente "
+               f"(🟠 desde {MO_AM:.0%}, 🔴 desde {MO_RO:.0%}). La app tiene registros solo desde el 17-ago: "
+               "un 🔴 es sobrecosto seguro; un 🟢 puede esconder MO de mayo a agosto que no se registró.")
+    with st.expander("Ver tabla completa (venta, costo proyectado, programado, ejecutado, facturado)"):
+        T = F.assign(Frente=[NOMBRE_FRENTE[i] for i in F.index])[["Frente", "venta", "proy", "PV", "EV", "facturado", "pMO", "mo_ganada", "mo_app"]]
+        T = T.rename(columns={"venta": "Venta CD", "proy": "Costo proyectado", "PV": "Programado", "EV": "Ejecutado",
+                              "facturado": "Facturado", "pMO": "MO propia APU (total)", "mo_ganada": "MO que paga el APU", "mo_app": "MO app"})
+        st.dataframe(T.style.format({c: "{:,.0f}" for c in T.columns if c != "Frente"}), hide_index=True, width='stretch')
+
+    # ================= 2. ALERTAS DE SOBRECOSTO DE MO POR PERIODO DE CORTE =================
+    st.markdown("#### 🚨 Alertas de sobrecosto de mano de obra — por periodo de corte")
     cortes_fechados = [k for k in cortes_con_valor if k in FEC and (k - 1) in FEC]
     if not cortes_fechados:
-        st.info("Para este análisis hacen falta las fechas de corte en la pestaña Cortes de Parametros_Alertas.")
+        st.info("Para estas alertas hacen falta las fechas de corte en la pestaña Cortes de Parametros_Alertas.")
     else:
         opciones = {f"Corte {k}: {_f(FEC[k-1] + pd.Timedelta(days=1))} → {_f(FEC[k])}": [k] for k in cortes_fechados}
         for a, b in zip(cortes_fechados, cortes_fechados[1:]):
             opciones[f"Cortes {a} y {b}: {_f(FEC[a-1] + pd.Timedelta(days=1))} → {_f(FEC[b])}"] = [a, b]
         claves = list(opciones)
         mo_min = mo_app["fecha"].min()
-        validas = [c for c in claves if FEC[opciones[c][0] - 1] + pd.Timedelta(days=1) >= mo_min - pd.Timedelta(days=7)]
-        lista = validas or claves
+        lista = [c for c in claves if FEC[opciones[c][0] - 1] + pd.Timedelta(days=1) >= mo_min - pd.Timedelta(days=7)] or claves
         cubiertas = [i for i, c in enumerate(lista) if FEC[opciones[c][-1]] <= mo_app["fecha"].max() + pd.Timedelta(days=1)]
         sel = st.selectbox("Periodo", lista, index=(cubiertas[-1] if cubiertas else len(lista) - 1),
-                           help="Solo tiene sentido desde que la app tiene registros (17-ago).")
+                           help="Rango entre fechas de corte. Solo tiene sentido desde que la app tiene registros (17-ago).")
         ks = opciones[sel]
-        d_ini = FEC[ks[0] - 1] + pd.Timedelta(days=1)
-        d_fin = FEC[ks[-1]]
-        st.caption(f"Facturado en {'el corte' if len(ks) == 1 else 'los cortes'} {' y '.join(map(str, ks))} contra MO registrada en la app del "
-                   f"{_f(d_ini)} al {_f(d_fin)}. Último registro de la app: {_f(mo_app['fecha'].max())}.")
+        d_ini, d_fin = FEC[ks[0] - 1] + pd.Timedelta(days=1), FEC[ks[-1]]
+        hasta = [k for k in cortes_con_valor if k <= ks[-1]]
+        antes = [k for k in cortes_con_valor if k < ks[0]]
         J = I.copy()
         J["fact_per"] = J[[f"v{k}" for k in ks]].sum(axis=1)
-        J["fact_antes"] = J[[f"v{k}" for k in cortes_con_valor if k < ks[0]]].sum(axis=1) if any(k < ks[0] for k in cortes_con_valor) else 0.0
-        J["pct_antes"] = np.where(J["venta"] > 0, J["fact_antes"] / J["venta"], 0)
-        J["mo_ganada"] = np.where(J["venta"] > 0, J["fact_per"] / J["venta"], 0) * J["pMO"]
+        J["pct_antes"] = np.where(J["venta"] > 0, J[[f"v{k}" for k in antes]].sum(axis=1) / J["venta"], 0) if antes else 0.0
+        J["pct_hasta"] = np.where(J["venta"] > 0, J[[f"v{k}" for k in hasta]].sum(axis=1) / J["venta"], 0)
         mper = mo_app[(mo_app["fecha"] >= d_ini) & (mo_app["fecha"] <= d_fin)]
-        J = J.merge(mper.groupby("cod")["costo_calculado"].sum().rename("mo_app"), on="cod", how="outer")
-        J = J.fillna({c: 0 for c in ["fact_per", "mo_ganada", "mo_app", "pMO", "pct_antes", "venta"]})
-        J["fr"] = J["fr"].fillna(J["cod"].str[:2])
-        J = J[(J["mo_app"] > 0) | (J["mo_ganada"] > 0)]
+        macu = mo_app[mo_app["fecha"] <= d_fin]
+        J = J.merge(mper.groupby("cod")["costo_calculado"].sum().rename("mo_per"), on="cod", how="outer")
+        J = J.merge(macu.groupby("cod")["costo_calculado"].sum().rename("mo_acu"), on="cod", how="left")
+        J = J.fillna({c: 0 for c in ["fact_per", "mo_per", "mo_acu", "pMO", "pct_antes", "pct_hasta", "venta"]})
+        J["fr"] = J["fr"].fillna(J["cod"].str.extract(r"^(?:NP|SUP)-(\d\d)")[0]).fillna(J["cod"].str[:2])
+        J["Frente"] = J["fr"].map(NOMBRE_FRENTE).fillna(J["fr"])
+        J["Residente"] = J["fr"].map(RES).fillna("—")
+        desc_app = mo_app.drop_duplicates("cod").set_index("cod")["actDesc"] if "actDesc" in mo_app.columns else pd.Series(dtype=str)
+        J["Actividad"] = J["desc"].fillna(J["cod"].map(desc_app)).astype(str).str.slice(0, 70)
+        J = J[~J["fr"].isin(FRENTES_GUIAS)]
+        J["mo_paga_acu"] = J["pct_hasta"] * J["pMO"]
 
-        def grupo(r):
-            if r["fr"] in FRENTES_GUIAS:
-                return "Guías (no comparable)"
-            if r["pMO"] <= 0:
-                return "APU sin MO propia (subcontrato, no presupuestada, supervisión)"
-            if r["pct_antes"] >= 0.999:
-                return "Ítem ya facturado al 100% antes del periodo"
-            if r["fact_per"] <= 0:
-                return "Obra en proceso: sin facturar en el periodo"
-            return "Facturado en el periodo"
-        J["Grupo"] = J.apply(grupo, axis=1)
-        R = J.groupby("Grupo").agg(**{"Ítems": ("cod", "size"), "MO que paga el APU": ("mo_ganada", "sum"),
-                                      "MO en la app": ("mo_app", "sum")}).reset_index()
-        orden = ["Facturado en el periodo", "Obra en proceso: sin facturar en el periodo", "Ítem ya facturado al 100% antes del periodo",
-                 "APU sin MO propia (subcontrato, no presupuestada, supervisión)", "Guías (no comparable)"]
-        R["o"] = R["Grupo"].map({g: i for i, g in enumerate(orden)})
-        R = R.sort_values("o").drop(columns="o")
-        c1, c2 = st.columns([3, 2])
-        c1.dataframe(R.style.format({"MO que paga el APU": "{:,.0f}", "MO en la app": "{:,.0f}"}), hide_index=True, width='stretch')
-        c2.metric("MO registrada en la app", f"$ {J['mo_app'].sum()/1e6:,.1f} M")
-        c2.metric("MO que paga el APU por lo facturado", f"$ {J.loc[~J['fr'].isin(FRENTES_GUIAS), 'mo_ganada'].sum()/1e6:,.1f} M")
-        c2.caption("Sin contar las guías.")
-        with st.expander("Detalle por ítem"):
-            g_sel = st.multiselect("Grupos", orden, default=["Ítem ya facturado al 100% antes del periodo", "Facturado en el periodo"])
-            D = J[J["Grupo"].isin(g_sel)].copy()
-            D["Diferencia (APU − app)"] = D["mo_ganada"] - D["mo_app"]
-            D["Frente"] = D["fr"].map(NOMBRE_FRENTE)
-            D = D.sort_values("Diferencia (APU − app)")[["cod", "Frente", "desc", "Grupo", "pct_antes", "fact_per", "mo_ganada", "mo_app", "Diferencia (APU − app)"]]
-            D = D.rename(columns={"cod": "Código", "desc": "Descripción", "pct_antes": "% facturado antes", "fact_per": "Facturado en el periodo",
-                                  "mo_ganada": "MO que paga el APU", "mo_app": "MO en la app"})
-            st.dataframe(D.style.format({"% facturado antes": "{:.0%}", "Facturado en el periodo": "{:,.0f}", "MO que paga el APU": "{:,.0f}",
-                                         "MO en la app": "{:,.0f}", "Diferencia (APU − app)": "{:,.0f}"}), hide_index=True, width='stretch')
+        a1 = J[(J["mo_per"] > 0) & (J["pMO"] > 0) & (J["pct_antes"] >= 0.999)].copy()
+        a2 = J[(J["mo_per"] > 0) & (J["pMO"] > 0) & (J["pct_antes"] < 0.999) & (J["pct_hasta"] > 0) & (J["mo_acu"] > J["mo_paga_acu"])].copy()
+        a2["Exceso"] = a2["mo_acu"] - a2["mo_paga_acu"]
+        a3 = J[(J["mo_per"] > 0) & (J["pMO"] <= 0)].copy()
+        a3["Tipo"] = np.select([a3["cod"].str.startswith("SUP"), a3["cod"].str.startswith("NP"), a3["venta"] > 0],
+                               ["Supervisión de maestro (va a la A)", "No presupuestada", "Subcontratada en el APU"], "Sin venta en el contrato")
+        a4 = J[(J["mo_per"] > 0) & (J["pMO"] > 0) & (J["pct_antes"] < 0.999) & (J["fact_per"] <= 0) & ~J.index.isin(a2.index)].copy()
 
-    # ---- atraso por actividad
-    with st.expander(f"Actividades con mayor atraso al {_f(sem)}"):
-        ws_ = set(P["wbs"].unique())
-        Ls = P[(P["semana"] == sem) & (P["wbs"] != "0")].copy()
-        Ls = Ls[~Ls["wbs"].apply(lambda w: any(o.startswith(w + ".") for o in ws_))]
-        Ls["Atraso(−)/adelanto(+)"] = Ls["EV"].fillna(0) - Ls["PV"].fillna(0)
-        nom = dict(P[P["semana"] == sem][["wbs", "nombre"]].values)
-        Ls["Frente / grupo"] = Ls["wbs"].apply(lambda w: " > ".join(nom.get(".".join(w.split(".")[:i]), "") for i in range(1, min(3, len(w.split("."))))))
-        A_ = Ls.sort_values("Atraso(−)/adelanto(+)").head(20)[["wbs", "Frente / grupo", "nombre", "PV", "EV", "Atraso(−)/adelanto(+)"]]
-        A_ = A_.rename(columns={"wbs": "EDT", "nombre": "Actividad", "PV": "Programado", "EV": "Ejecutado"})
-        st.dataframe(A_.style.format({c: "{:,.0f}" for c in ["Programado", "Ejecutado", "Atraso(−)/adelanto(+)"]}), hide_index=True, width='stretch')
+        st.caption(f"MO registrada en la app del {_f(d_ini)} al {_f(d_fin)} (sin guías): **$ {J['mo_per'].sum()/1e6:,.1f} M**. "
+                   f"Facturado en {'el corte' if len(ks) == 1 else 'los cortes'} {' y '.join(map(str, ks))}. Último registro de la app: {_f(mo_app['fecha'].max())}.")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("🔴 Ítems ya cobrados que siguen gastando MO", f"$ {a1['mo_per'].sum()/1e6:,.1f} M")
+        m1.caption(f"{len(a1)} ítems · costo sin ingreso")
+        m2.metric("🔴 MO que ya pasó lo que paga el APU", f"$ {a2['Exceso'].sum()/1e6:,.1f} M")
+        m2.caption(f"{len(a2)} ítems · exceso acumulado")
+        m3.metric("🟠 MO en actividades sin MO en el APU", f"$ {a3['mo_per'].sum()/1e6:,.1f} M")
+        m3.caption(f"{a3['cod'].nunique()} códigos · nadie la paga hoy")
+        m4.metric("⚪ MO en obra aún sin facturar", f"$ {a4['mo_per'].sum()/1e6:,.1f} M")
+        m4.caption(f"{len(a4)} ítems · debe entrar en el próximo corte")
+
+        fmt_m = {"MO del periodo": "{:,.0f}", "MO gastada (acum.)": "{:,.0f}", "MO que paga el APU": "{:,.0f}", "Exceso": "{:,.0f}", "% facturado": "{:.0%}"}
+        with st.expander(f"🔴 1. Ya cobrados al 100 % y siguen gastando MO ({len(a1)})", expanded=len(a1) > 0):
+            st.markdown("**Decisión:** el residente confirma qué pasó. Si es **repaso o garantía** → es costo sin ingreso, va a plan de mejora. "
+                        "Si es **código equivocado** en la app → se corrige el código del registro.")
+            t = a1.sort_values("mo_per", ascending=False)[["Frente", "Residente", "cod", "Actividad", "mo_per"]]
+            st.dataframe(t.rename(columns={"cod": "Código", "mo_per": "MO del periodo"}).style.format(fmt_m), hide_index=True, width='stretch')
+        with st.expander(f"🔴 2. La MO gastada ya superó lo que paga el APU por lo facturado ({len(a2)})", expanded=len(a2) > 0):
+            st.markdown("**Decisión:** si la cantidad real es mayor que la facturada → **cobrarla en el próximo corte**. "
+                        "Si no → revisar **rendimiento o tamaño de la cuadrilla** con el residente.")
+            t = a2.sort_values("Exceso", ascending=False)[["Frente", "Residente", "cod", "Actividad", "pct_hasta", "mo_paga_acu", "mo_acu", "Exceso"]]
+            st.dataframe(t.rename(columns={"cod": "Código", "pct_hasta": "% facturado", "mo_paga_acu": "MO que paga el APU",
+                                           "mo_acu": "MO gastada (acum.)"}).style.format(fmt_m), hide_index=True, width='stretch')
+            st.caption("Acumulado hasta el fin del periodo. La app solo tiene registros desde el 17-ago, así que el exceso real es igual o mayor.")
+        with st.expander(f"🟠 3. MO propia en actividades que el APU no paga con MO propia ({a3['cod'].nunique()})"):
+            st.markdown("**Decisión según el tipo:** *Subcontratada* → ¿por qué trabaja personal propio? descontar al subcontratista o justificar. "
+                        "*No presupuestada* → tramitar como adicional para poder cobrarla. *Supervisión* → se carga a la A.")
+            t = a3.sort_values("mo_per", ascending=False)[["Frente", "Residente", "Tipo", "cod", "Actividad", "mo_per"]]
+            st.dataframe(t.rename(columns={"cod": "Código", "mo_per": "MO del periodo"}).style.format(fmt_m), hide_index=True, width='stretch')
+        with st.expander(f"⚪ 4. MO en obra que todavía no se ha facturado ({len(a4)})"):
+            st.markdown("**Decisión:** confirmar que estas actividades **entren en el próximo corte**. Si siguen sin facturarse dos cortes seguidos, revisar.")
+            t = a4.sort_values("mo_per", ascending=False)[["Frente", "Residente", "cod", "Actividad", "pct_hasta", "mo_per"]]
+            st.dataframe(t.rename(columns={"cod": "Código", "pct_hasta": "% facturado", "mo_per": "MO del periodo"}).style.format(fmt_m), hide_index=True, width='stretch')
+
+        import io as _io
+        buf = _io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as xw:
+            for nom, d, cols in [("1 Cobrados que gastan MO", a1, ["Frente", "Residente", "cod", "Actividad", "mo_per"]),
+                                 ("2 MO supera el APU", a2, ["Frente", "Residente", "cod", "Actividad", "pct_hasta", "mo_paga_acu", "mo_acu", "Exceso"]),
+                                 ("3 MO sin MO en APU", a3, ["Frente", "Residente", "Tipo", "cod", "Actividad", "mo_per"]),
+                                 ("4 Obra sin facturar", a4, ["Frente", "Residente", "cod", "Actividad", "pct_hasta", "mo_per"])]:
+                d[cols].rename(columns={"cod": "Código", "mo_per": "MO del periodo", "pct_hasta": "% facturado",
+                                        "mo_paga_acu": "MO que paga el APU", "mo_acu": "MO gastada (acum.)"}).to_excel(xw, sheet_name=nom, index=False)
+        st.download_button("📥 Descargar estas alertas (Excel, para los residentes)", buf.getvalue(),
+                           file_name=f"Alertas_MO_cortes_{'_'.join(map(str, ks))}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    # ================= 3. ATRASO PARA GERENCIA =================
+    st.markdown(f"#### ⏱️ Atraso por frente al {_f(sem)} — qué estaba programado y no se ha hecho")
+    ws_ = set(P["wbs"].unique())
+    Ps = P[P["semana"] == sem]
+    nom = dict(Ps[["wbs", "nombre"]].values)
+    Ls = Ps[(Ps["wbs"] != "0") & ~Ps["wbs"].apply(lambda w: any(o.startswith(w + ".") for o in ws_))].copy()
+    Ls["gap"] = Ls["EV"].fillna(0) - Ls["PV"].fillna(0)
+    Ls["l1"] = Ls["wbs"].str.split(".").str[0]
+    l1fr = dict(P[(P["nivel"] == 1) & P["fr"].notna()][["wbs", "fr"]].drop_duplicates().values)
+    Ls["fr"] = Ls["l1"].map(l1fr)
+    Ls["zona"] = Ls["wbs"].apply(lambda w: nom.get(".".join(w.split(".")[:2]), "") if w.count(".") >= 2 else "")
+    filas = []
+    for fr_, d in Ls[Ls["fr"].notna()].groupby("fr"):
+        atr = d[d["gap"] < -1e6].sort_values("gap")
+        if atr.empty:
+            continue
+        top3 = " · ".join(f"{r.nombre} {('(' + r.zona.strip() + ')') if r.zona else ''} {abs(r.gap)/1e6:,.0f} M" for r in atr.head(3).itertuples())
+        sin_iniciar = int(((d["PV"] > 0) & (d["EV"].fillna(0) <= 0)).sum())
+        filas.append({"Frente": NOMBRE_FRENTE[fr_], "Residente": RES.get(fr_, "—"),
+                      "Avance vs. programado": s_avance(F.loc[fr_, "avance"]) if fr_ in F.index else "—",
+                      "Atraso neto ($ M)": round((d["gap"].sum()) / 1e6),
+                      "Actividades sin iniciar que ya debían ir": sin_iniciar,
+                      "Lo más atrasado": top3})
+    if filas:
+        A3 = pd.DataFrame(filas).sort_values("Atraso neto ($ M)")
+        st.dataframe(A3, hide_index=True, width='stretch')
+        st.caption("Atraso neto = ejecutado − programado del frente (lo adelantado compensa lo atrasado). "
+                   "Úsalo para pedir a cada residente un **plan de recuperación** de las actividades listadas. "
+                   "Ojo: si lo atrasado es un **suministro** (equipos, muebles, cubierta) la causa suele ser compras, no la obra.")
+    with st.expander("Ver las 20 actividades con mayor atraso del proyecto"):
+        A_ = Ls.sort_values("gap").head(20).assign(Frente=lambda d: d["fr"].map(NOMBRE_FRENTE))
+        A_ = A_[["Frente", "zona", "nombre", "PV", "EV", "gap"]].rename(columns={"zona": "Zona / grupo", "nombre": "Actividad", "PV": "Programado",
+                                                                               "EV": "Ejecutado", "gap": "Atraso"})
+        st.dataframe(A_.style.format({c: "{:,.0f}" for c in ["Programado", "Ejecutado", "Atraso"]}), hide_index=True, width='stretch')
 
     # ---- calidad de los archivos
     avisos = []
