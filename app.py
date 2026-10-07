@@ -396,6 +396,9 @@ with col_titulo:
     st.caption("AIRPLAN T1 JMC · Mano de Obra + Equipos")
 
 with st.sidebar:
+    vista = st.radio("Vista", ["Gerencia", "Control interno"], horizontal=True,
+                     help="Gerencia: resumen, alertas y presupuesto. Control interno: cobertura de registro, códigos por persona, productividad y cargo vs. tarea.")
+    st.divider()
     st.header("Filtros")
     frentes_mo = sorted(mo["frente"].dropna().unique())
     frente_sel = st.multiselect("Frente de trabajo / intervención", frentes_mo, default=frentes_mo)
@@ -421,6 +424,8 @@ with st.sidebar:
         f"{len(mo)} registro(s) guardados por los maestros desde la app de campo "
         "(a partir del 7 de septiembre de 2026). Se actualiza solo al refrescar."
     )
+
+VISTA_GERENCIA = (vista == "Gerencia")
 
 mo_f = mo[mo["frente"].isin(frente_sel)] if frente_sel else mo
 mo_f = mo_f[mo_f["semana_etiqueta"].isin(semana_sel)] if semana_sel else mo_f
@@ -462,298 +467,320 @@ st.divider()
 # quedan ocultas; para volver a mostrarlas cambia estas banderas a True.
 MOSTRAR_EQUIPOS = False
 MOSTRAR_CALIDAD = False
-tab0, tab8, tab5, tab3, tab7 = st.tabs(["📋 Resumen semanal", "✅ Cobertura de registro", "🔎 Códigos por Persona", "📈 Productividad", "⚠️ Cargo vs. tarea"])
+# Vistas (7-oct-2026): GERENCIA = Resumen general + Alertas de la semana + Presupuesto vs. ejecutado.
+# CONTROL INTERNO (control de costos y residentes) = Cobertura, Códigos por persona, Productividad, Cargo vs. tarea.
+if VISTA_GERENCIA:
+    tab0, tabA, tabP = st.tabs(["📋 Resumen general", "🚨 Alertas de la semana", "💰 Presupuesto vs. ejecutado"])
+else:
+    tab8, tab5, tab3, tab7 = st.tabs(["✅ Cobertura de registro", "🔎 Códigos por Persona", "📈 Productividad", "⚠️ Cargo vs. tarea"])
+
+if VISTA_GERENCIA:
+    with tabA:
+        st.subheader("Alertas de la semana")
+        st.info(
+            "🛠️ En construcción. Aquí aparecerán cada semana, con semáforo, frente y residente responsable: "
+            "% de horas extra por persona (proyectado 40 %), jornadas excesivas, administración (A) de maestros vs. proyección, "
+            "trabajo en campamento, sobrecosto de mano de obra por actividad, posible doble pago con subcontratos "
+            "y actividades no presupuestadas."
+        )
+    with tabP:
+        st.subheader("Presupuesto vs. ejecutado por frente")
+        st.info(
+            "🛠️ En construcción. Valor proyectado (SINCO) contra mano de obra + equipos ejecutados, por frente y por actividad."
+        )
 
 # ============ TAB RESUMEN EJECUTIVO SEMANAL ============
-with tab0:
-    st.subheader("Resumen ejecutivo — periodo filtrado")
-    st.caption(
-        "Misma combinacion del informe semanal en Word, en vivo: respeta los "
-        "filtros de frente, semana y fecha de la barra lateral."
-    )
+if VISTA_GERENCIA:
+    with tab0:
+        st.subheader("Resumen ejecutivo — periodo filtrado")
+        st.caption(
+            "Misma combinacion del informe semanal en Word, en vivo: respeta los "
+            "filtros de frente, semana y fecha de la barra lateral."
+        )
 
-    if mo_f.empty:
-        st.info("No hay registros de mano de obra para los filtros seleccionados.")
-    else:
-        horas_totales = mo_f["horas"].sum()
-        costo_total = mo_f["costo_calculado"].sum()
-        personal_activo = mo_f["nombre"].nunique()
-        frentes_trabajados = mo_f["frente_corto"].nunique()
-
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Horas totales", f"{horas_totales:,.1f} h")
-        k2.metric("Personal activo", personal_activo)
-        k3.metric("Frentes trabajados", frentes_trabajados)
-        k4.metric("Costo estimado", f"$ {costo_total:,.0f}")
-
-        # --- Alerta de recargo ---
-        costo_ordinaria = mo_f.loc[mo_f["tipo_hora"] == "Ordinaria Diurna", "costo_calculado"].sum()
-        costo_extra = costo_total - costo_ordinaria
-        pct_extra = (costo_extra / costo_total * 100) if costo_total else 0
-        horas_extra = mo_f.loc[mo_f["tipo_hora"] != "Ordinaria Diurna", "horas"].sum()
-
-        if pct_extra >= 50:
-            st.error(
-                f"⚠️ **Recargo elevado / supera la jornada ordinaria:** el **{pct_extra:,.1f}%** "
-                f"del costo (${costo_extra:,.0f}) corresponde a horas extra y nocturnas "
-                f"({horas_extra:,.0f} h), frente a un {100-pct_extra:,.1f}% en jornada ordinaria."
-            )
-        elif pct_extra >= 35:
-            st.warning(
-                f"⚠️ **Recargo alto:** el **{pct_extra:,.1f}%** del costo (${costo_extra:,.0f}) "
-                f"corresponde a horas extra y nocturnas ({horas_extra:,.0f} h)."
-            )
+        if mo_f.empty:
+            st.info("No hay registros de mano de obra para los filtros seleccionados.")
         else:
-            st.success(
-                f"✅ Recargo dentro de rango normal: {pct_extra:,.1f}% del costo en horas extra/nocturnas."
-            )
+            horas_totales = mo_f["horas"].sum()
+            costo_total = mo_f["costo_calculado"].sum()
+            personal_activo = mo_f["nombre"].nunique()
+            frentes_trabajados = mo_f["frente_corto"].nunique()
 
-        st.divider()
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Horas totales", f"{horas_totales:,.1f} h")
+            k2.metric("Personal activo", personal_activo)
+            k3.metric("Frentes trabajados", frentes_trabajados)
+            k4.metric("Costo estimado", f"$ {costo_total:,.0f}")
 
-        ce1, ce2 = st.columns(2)
-        with ce1:
-            st.markdown("**Distribucion por Frente**")
-            pf = (
-                mo_f.groupby("frente", as_index=False)
-                .agg(horas=("horas", "sum"), costo=("costo_calculado", "sum"))
-                .sort_values("costo", ascending=True)
-            )
-            pf["pct"] = pf["costo"] / pf["costo"].sum() * 100
-            figpf = px.bar(
-                pf, x="costo", y="frente", orientation="h", text=pf["pct"].map(lambda x: f"{x:.1f}%"),
-                labels={"costo": "Costo ($)", "frente": ""},
-                color="costo", color_continuous_scale=ESCALA_VERDE,
-            )
-            figpf.update_layout(coloraxis_showscale=False)
-            figpf.update_traces(textposition="outside")
-            st.plotly_chart(figpf, width='stretch')
+            # --- Alerta de recargo ---
+            costo_ordinaria = mo_f.loc[mo_f["tipo_hora"] == "Ordinaria Diurna", "costo_calculado"].sum()
+            costo_extra = costo_total - costo_ordinaria
+            pct_extra = (costo_extra / costo_total * 100) if costo_total else 0
+            horas_extra = mo_f.loc[mo_f["tipo_hora"] != "Ordinaria Diurna", "horas"].sum()
 
-        with ce2:
-            st.markdown("**Distribucion por Tipo de Hora**")
-            pt = (
-                mo_f.groupby("tipo_hora", as_index=False)
-                .agg(horas=("horas", "sum"), costo=("costo_calculado", "sum"))
-                .sort_values("costo", ascending=True)
-            )
-            pt["pct"] = pt["costo"] / pt["costo"].sum() * 100
-            colores_tipo = ["#B00000" if t != "Ordinaria Diurna" else VERDE_AIA for t in pt["tipo_hora"]]
-            figpt = px.bar(
-                pt, x="costo", y="tipo_hora", orientation="h", text=pt["pct"].map(lambda x: f"{x:.1f}%"),
-                labels={"costo": "Costo ($)", "tipo_hora": ""},
-            )
-            figpt.update_traces(marker_color=colores_tipo, textposition="outside")
-            st.plotly_chart(figpt, width='stretch')
-
-        st.divider()
-
-        st.markdown("**¿En que se esta yendo el costo? — Personal mas representativo**")
-        top_n_personas = 6
-        tp = (
-            mo_f.groupby("nombre", as_index=False)
-            .agg(cargo=("cargo", "first"), horas=("horas", "sum"), costo=("costo_calculado", "sum"))
-            .sort_values("costo", ascending=False)
-            .head(top_n_personas)
-        )
-        recargo_pct = mo_f.groupby("nombre").apply(
-            lambda g: (g.loc[g["tipo_hora"] != "Ordinaria Diurna", "costo_calculado"].sum()
-                       / g["costo_calculado"].sum() * 100) if g["costo_calculado"].sum() else 0
-        )
-        tp["% recargo"] = tp["nombre"].map(recargo_pct).round(0).astype(int)
-        pct_top_personas = tp["costo"].sum() / costo_total * 100 if costo_total else 0
-        st.caption(f"Las {top_n_personas} personas de mayor costo concentran el {pct_top_personas:.0f}% del gasto del periodo.")
-        st.dataframe(
-            tp.rename(columns={"nombre": "Nombre", "cargo": "Cargo", "horas": "Horas", "costo": "Costo"})
-            .style.format({"Costo": "${:,.0f}", "Horas": "{:,.0f}", "% recargo": "{:d}%"})
-            .map(lambda v: "color: #B00000; font-weight: bold" if isinstance(v, (int, float)) and v >= 50 else "",
-                 subset=["% recargo"]),
-            width='stretch', hide_index=True,
-        )
-
-        st.markdown("**Actividades mas representativas del costo**")
-        top_n_act = 6
-        ta = (
-            mo_f.groupby(["frente_corto", "actDesc"], as_index=False)
-            .agg(horas=("horas", "sum"), costo=("costo_calculado", "sum"))
-            .sort_values("costo", ascending=False)
-            .head(top_n_act)
-        )
-        ta["actDesc"] = ta["actDesc"].str.split("(").str[0].str.strip().str.slice(0, 70)
-        pct_top_act = ta["costo"].sum() / costo_total * 100 if costo_total else 0
-        st.caption(f"Las {top_n_act} actividades de mayor costo concentran el {pct_top_act:.0f}% del gasto del periodo.")
-        st.dataframe(
-            ta.rename(columns={"frente_corto": "Frente", "actDesc": "Actividad", "horas": "Horas", "costo": "Costo"})
-            .style.format({"Costo": "${:,.0f}", "Horas": "{:,.0f}"}),
-            width='stretch', hide_index=True,
-        )
-
-    st.divider()
-    st.subheader("Asistencia de personal de obra (Maestro, Oficial, Ayudante)")
-    st.caption(
-        "Compara el roster completo del Maestro de Personal contra quien "
-        "registro actividad en los dias presentes en el periodo filtrado "
-        "(barra lateral). Solo incluye cargos de obra, no almacen/servicios generales."
-    )
-
-    dias_periodo = sorted(mo_f["fecha"].dropna().dt.date.unique())
-    roster_obra = tarifas[
-        tarifas["CargoReal"].astype(str).str.contains("Maestro|Oficial|Ayudante", case=False, na=False)
-        & ~tarifas["CargoReal"].astype(str).str.contains("Almacen|Servicios Generales", case=False, na=False)
-    ].copy()
-
-    if not dias_periodo or roster_obra.empty:
-        st.info("No hay suficientes datos en el periodo filtrado para calcular asistencia.")
-    else:
-        registros_por_persona = (
-            mo_f.dropna(subset=["fecha"])
-            .groupby("nombre_norm")["fecha"]
-            .apply(lambda s: set(s.dt.date))
-        )
-
-        filas_asist = []
-        for _, row in roster_obra.iterrows():
-            dias_reg = registros_por_persona.get(row["nombre_norm"], set())
-            dias_reg_en_periodo = dias_reg & set(dias_periodo)
-            faltantes = sorted(set(dias_periodo) - dias_reg_en_periodo)
-            if len(dias_reg_en_periodo) == len(dias_periodo):
-                estado = "Completo"
-            elif len(dias_reg_en_periodo) == 0:
-                estado = "Total"
+            if pct_extra >= 50:
+                st.error(
+                    f"⚠️ **Recargo elevado / supera la jornada ordinaria:** el **{pct_extra:,.1f}%** "
+                    f"del costo (${costo_extra:,.0f}) corresponde a horas extra y nocturnas "
+                    f"({horas_extra:,.0f} h), frente a un {100-pct_extra:,.1f}% en jornada ordinaria."
+                )
+            elif pct_extra >= 35:
+                st.warning(
+                    f"⚠️ **Recargo alto:** el **{pct_extra:,.1f}%** del costo (${costo_extra:,.0f}) "
+                    f"corresponde a horas extra y nocturnas ({horas_extra:,.0f} h)."
+                )
             else:
-                estado = "Parcial"
-            filas_asist.append({
-                "nombre": row["NombreCompleto"], "cargo": row["CargoReal"],
-                "estado": estado, "dias_con_registro": len(dias_reg_en_periodo),
-                "dias_totales": len(dias_periodo),
-                "dias_faltantes": ", ".join(dia_es(d) for d in faltantes),
-            })
-        asist = pd.DataFrame(filas_asist)
+                st.success(
+                    f"✅ Recargo dentro de rango normal: {pct_extra:,.1f}% del costo en horas extra/nocturnas."
+                )
 
-        n_completo = (asist["estado"] == "Completo").sum()
-        n_parcial = (asist["estado"] == "Parcial").sum()
-        n_total = (asist["estado"] == "Total").sum()
+            st.divider()
 
-        a1, a2, a3 = st.columns(3)
-        a1.metric("✅ Registro completo", n_completo)
-        a2.metric("🟡 Registro parcial", n_parcial)
-        a3.metric("🔴 Sin ningún registro", n_total)
+            ce1, ce2 = st.columns(2)
+            with ce1:
+                st.markdown("**Distribucion por Frente**")
+                pf = (
+                    mo_f.groupby("frente", as_index=False)
+                    .agg(horas=("horas", "sum"), costo=("costo_calculado", "sum"))
+                    .sort_values("costo", ascending=True)
+                )
+                pf["pct"] = pf["costo"] / pf["costo"].sum() * 100
+                figpf = px.bar(
+                    pf, x="costo", y="frente", orientation="h", text=pf["pct"].map(lambda x: f"{x:.1f}%"),
+                    labels={"costo": "Costo ($)", "frente": ""},
+                    color="costo", color_continuous_scale=ESCALA_VERDE,
+                )
+                figpf.update_layout(coloraxis_showscale=False)
+                figpf.update_traces(textposition="outside")
+                st.plotly_chart(figpf, width='stretch')
 
-        # dia con mas ausencias entre quienes registraron algo (patron tipo "miercoles")
-        con_algo = asist[asist["estado"].isin(["Parcial"])]
-        if not con_algo.empty:
-            from collections import Counter
-            conteo_dias = Counter()
+            with ce2:
+                st.markdown("**Distribucion por Tipo de Hora**")
+                pt = (
+                    mo_f.groupby("tipo_hora", as_index=False)
+                    .agg(horas=("horas", "sum"), costo=("costo_calculado", "sum"))
+                    .sort_values("costo", ascending=True)
+                )
+                pt["pct"] = pt["costo"] / pt["costo"].sum() * 100
+                colores_tipo = ["#B00000" if t != "Ordinaria Diurna" else VERDE_AIA for t in pt["tipo_hora"]]
+                figpt = px.bar(
+                    pt, x="costo", y="tipo_hora", orientation="h", text=pt["pct"].map(lambda x: f"{x:.1f}%"),
+                    labels={"costo": "Costo ($)", "tipo_hora": ""},
+                )
+                figpt.update_traces(marker_color=colores_tipo, textposition="outside")
+                st.plotly_chart(figpt, width='stretch')
+
+            st.divider()
+
+            st.markdown("**¿En que se esta yendo el costo? — Personal mas representativo**")
+            top_n_personas = 6
+            tp = (
+                mo_f.groupby("nombre", as_index=False)
+                .agg(cargo=("cargo", "first"), horas=("horas", "sum"), costo=("costo_calculado", "sum"))
+                .sort_values("costo", ascending=False)
+                .head(top_n_personas)
+            )
+            recargo_pct = mo_f.groupby("nombre").apply(
+                lambda g: (g.loc[g["tipo_hora"] != "Ordinaria Diurna", "costo_calculado"].sum()
+                           / g["costo_calculado"].sum() * 100) if g["costo_calculado"].sum() else 0
+            )
+            tp["% recargo"] = tp["nombre"].map(recargo_pct).round(0).astype(int)
+            pct_top_personas = tp["costo"].sum() / costo_total * 100 if costo_total else 0
+            st.caption(f"Las {top_n_personas} personas de mayor costo concentran el {pct_top_personas:.0f}% del gasto del periodo.")
+            st.dataframe(
+                tp.rename(columns={"nombre": "Nombre", "cargo": "Cargo", "horas": "Horas", "costo": "Costo"})
+                .style.format({"Costo": "${:,.0f}", "Horas": "{:,.0f}", "% recargo": "{:d}%"})
+                .map(lambda v: "color: #B00000; font-weight: bold" if isinstance(v, (int, float)) and v >= 50 else "",
+                     subset=["% recargo"]),
+                width='stretch', hide_index=True,
+            )
+
+            st.markdown("**Actividades mas representativas del costo**")
+            top_n_act = 6
+            ta = (
+                mo_f.groupby(["frente_corto", "actDesc"], as_index=False)
+                .agg(horas=("horas", "sum"), costo=("costo_calculado", "sum"))
+                .sort_values("costo", ascending=False)
+                .head(top_n_act)
+            )
+            ta["actDesc"] = ta["actDesc"].str.split("(").str[0].str.strip().str.slice(0, 70)
+            pct_top_act = ta["costo"].sum() / costo_total * 100 if costo_total else 0
+            st.caption(f"Las {top_n_act} actividades de mayor costo concentran el {pct_top_act:.0f}% del gasto del periodo.")
+            st.dataframe(
+                ta.rename(columns={"frente_corto": "Frente", "actDesc": "Actividad", "horas": "Horas", "costo": "Costo"})
+                .style.format({"Costo": "${:,.0f}", "Horas": "{:,.0f}"}),
+                width='stretch', hide_index=True,
+            )
+
+        st.divider()
+        st.subheader("Asistencia de personal de obra (Maestro, Oficial, Ayudante)")
+        st.caption(
+            "Compara el roster completo del Maestro de Personal contra quien "
+            "registro actividad en los dias presentes en el periodo filtrado "
+            "(barra lateral). Solo incluye cargos de obra, no almacen/servicios generales."
+        )
+
+        dias_periodo = sorted(mo_f["fecha"].dropna().dt.date.unique())
+        roster_obra = tarifas[
+            tarifas["CargoReal"].astype(str).str.contains("Maestro|Oficial|Ayudante", case=False, na=False)
+            & ~tarifas["CargoReal"].astype(str).str.contains("Almacen|Servicios Generales", case=False, na=False)
+        ].copy()
+
+        if not dias_periodo or roster_obra.empty:
+            st.info("No hay suficientes datos en el periodo filtrado para calcular asistencia.")
+        else:
+            registros_por_persona = (
+                mo_f.dropna(subset=["fecha"])
+                .groupby("nombre_norm")["fecha"]
+                .apply(lambda s: set(s.dt.date))
+            )
+
+            filas_asist = []
             for _, row in roster_obra.iterrows():
                 dias_reg = registros_por_persona.get(row["nombre_norm"], set())
                 dias_reg_en_periodo = dias_reg & set(dias_periodo)
-                if 0 < len(dias_reg_en_periodo) < len(dias_periodo):
-                    for d in set(dias_periodo) - dias_reg_en_periodo:
-                        conteo_dias[d] += 1
-            if conteo_dias:
-                dia_top, veces = conteo_dias.most_common(1)[0]
-                st.warning(
-                    f"📌 **{dia_es(dia_top, largo=True)}** es el día que más se repite sin "
-                    f"registro entre quienes sí trabajaron el resto de la semana ({veces} personas)."
+                faltantes = sorted(set(dias_periodo) - dias_reg_en_periodo)
+                if len(dias_reg_en_periodo) == len(dias_periodo):
+                    estado = "Completo"
+                elif len(dias_reg_en_periodo) == 0:
+                    estado = "Total"
+                else:
+                    estado = "Parcial"
+                filas_asist.append({
+                    "nombre": row["NombreCompleto"], "cargo": row["CargoReal"],
+                    "estado": estado, "dias_con_registro": len(dias_reg_en_periodo),
+                    "dias_totales": len(dias_periodo),
+                    "dias_faltantes": ", ".join(dia_es(d) for d in faltantes),
+                })
+            asist = pd.DataFrame(filas_asist)
+
+            n_completo = (asist["estado"] == "Completo").sum()
+            n_parcial = (asist["estado"] == "Parcial").sum()
+            n_total = (asist["estado"] == "Total").sum()
+
+            a1, a2, a3 = st.columns(3)
+            a1.metric("✅ Registro completo", n_completo)
+            a2.metric("🟡 Registro parcial", n_parcial)
+            a3.metric("🔴 Sin ningún registro", n_total)
+
+            # dia con mas ausencias entre quienes registraron algo (patron tipo "miercoles")
+            con_algo = asist[asist["estado"].isin(["Parcial"])]
+            if not con_algo.empty:
+                from collections import Counter
+                conteo_dias = Counter()
+                for _, row in roster_obra.iterrows():
+                    dias_reg = registros_por_persona.get(row["nombre_norm"], set())
+                    dias_reg_en_periodo = dias_reg & set(dias_periodo)
+                    if 0 < len(dias_reg_en_periodo) < len(dias_periodo):
+                        for d in set(dias_periodo) - dias_reg_en_periodo:
+                            conteo_dias[d] += 1
+                if conteo_dias:
+                    dia_top, veces = conteo_dias.most_common(1)[0]
+                    st.warning(
+                        f"📌 **{dia_es(dia_top, largo=True)}** es el día que más se repite sin "
+                        f"registro entre quienes sí trabajaron el resto de la semana ({veces} personas)."
+                    )
+
+            with st.expander(f"🔴 Sin ningún registro ({n_total})"):
+                st.dataframe(
+                    asist.loc[asist["estado"] == "Total", ["nombre", "cargo"]].rename(columns=COLS_ASIST),
+                    width='stretch', hide_index=True,
+                )
+            with st.expander(f"🟡 Registro parcial ({n_parcial})"):
+                st.dataframe(
+                    asist.loc[asist["estado"] == "Parcial", ["nombre", "cargo", "dias_con_registro", "dias_totales", "dias_faltantes"]].rename(columns=COLS_ASIST),
+                    width='stretch', hide_index=True,
+                )
+            with st.expander(f"✅ Registro completo ({n_completo})"):
+                st.dataframe(
+                    asist.loc[asist["estado"] == "Completo", ["nombre", "cargo"]].rename(columns=COLS_ASIST),
+                    width='stretch', hide_index=True,
                 )
 
-        with st.expander(f"🔴 Sin ningún registro ({n_total})"):
-            st.dataframe(
-                asist.loc[asist["estado"] == "Total", ["nombre", "cargo"]].rename(columns=COLS_ASIST),
-                width='stretch', hide_index=True,
-            )
-        with st.expander(f"🟡 Registro parcial ({n_parcial})"):
-            st.dataframe(
-                asist.loc[asist["estado"] == "Parcial", ["nombre", "cargo", "dias_con_registro", "dias_totales", "dias_faltantes"]].rename(columns=COLS_ASIST),
-                width='stretch', hide_index=True,
-            )
-        with st.expander(f"✅ Registro completo ({n_completo})"):
-            st.dataframe(
-                asist.loc[asist["estado"] == "Completo", ["nombre", "cargo"]].rename(columns=COLS_ASIST),
-                width='stretch', hide_index=True,
-            )
-
 # ============ (antes TAB MANO DE OBRA) -> continúa en Resumen semanal ============
-with tab0:
-    st.divider()
-    # ---------- NUEVO: actividades no presupuestadas (códigos NP-<frente>-<categoría>) ----------
-    st.subheader("Actividades no presupuestadas")
-    np_f = mo_f[mo_f["codact"].astype(str).str.startswith("NP-")].copy()
-    if np_f.empty:
-        st.caption("No hay actividades no presupuestadas en el periodo filtrado.")
-    else:
-        np_f["cat"] = np_f["codact"].str.split("-").str[2]
-        np_f["categoria"] = np_f["cat"].map(lambda c: f"{c} - {NOMBRES_CATEGORIA.get(c, c)}")
-        np_f["descripcion"] = np_f["actDesc"].astype(str).str.replace("[NO PRESUPUESTADA] ", "", regex=False)
-        n1, n2, n3 = st.columns(3)
-        n1.metric("Costo M.O. no presupuestado", f"$ {np_f['costo_calculado'].sum():,.0f}")
-        n2.metric("Horas no presupuestadas", f"{np_f['horas'].sum():,.1f} h")
-        n3.metric("% del costo del periodo", f"{100 * np_f['costo_calculado'].sum() / max(mo_f['costo_calculado'].sum(), 1):.1f}%")
-        st.caption("Soporte de horas y costo para sustentar mayores cantidades u obras adicionales.")
-        tabla_np = (np_f.groupby(["frente_corto", "categoria", "descripcion"], as_index=False)
-                    .agg(horas=("horas", "sum"), costo=("costo_calculado", "sum"), personas=("nombre", "nunique"))
-                    .sort_values("costo", ascending=False)
-                    .rename(columns={"frente_corto": "Frente", "categoria": "Categoría", "descripcion": "Descripción",
-                                     "horas": "Horas", "costo": "Costo M.O. ($)", "personas": "Personas"}))
-        st.dataframe(tabla_np.style.format({"Horas": "{:,.1f}", "Costo M.O. ($)": "${:,.0f}"}),
-                     width='stretch', hide_index=True)
+if VISTA_GERENCIA:
+    with tab0:
+        st.divider()
+        # ---------- NUEVO: actividades no presupuestadas (códigos NP-<frente>-<categoría>) ----------
+        st.subheader("Actividades no presupuestadas")
+        np_f = mo_f[mo_f["codact"].astype(str).str.startswith("NP-")].copy()
+        if np_f.empty:
+            st.caption("No hay actividades no presupuestadas en el periodo filtrado.")
+        else:
+            np_f["cat"] = np_f["codact"].str.split("-").str[2]
+            np_f["categoria"] = np_f["cat"].map(lambda c: f"{c} - {NOMBRES_CATEGORIA.get(c, c)}")
+            np_f["descripcion"] = np_f["actDesc"].astype(str).str.replace("[NO PRESUPUESTADA] ", "", regex=False)
+            n1, n2, n3 = st.columns(3)
+            n1.metric("Costo M.O. no presupuestado", f"$ {np_f['costo_calculado'].sum():,.0f}")
+            n2.metric("Horas no presupuestadas", f"{np_f['horas'].sum():,.1f} h")
+            n3.metric("% del costo del periodo", f"{100 * np_f['costo_calculado'].sum() / max(mo_f['costo_calculado'].sum(), 1):.1f}%")
+            st.caption("Soporte de horas y costo para sustentar mayores cantidades u obras adicionales.")
+            tabla_np = (np_f.groupby(["frente_corto", "categoria", "descripcion"], as_index=False)
+                        .agg(horas=("horas", "sum"), costo=("costo_calculado", "sum"), personas=("nombre", "nunique"))
+                        .sort_values("costo", ascending=False)
+                        .rename(columns={"frente_corto": "Frente", "categoria": "Categoría", "descripcion": "Descripción",
+                                         "horas": "Horas", "costo": "Costo M.O. ($)", "personas": "Personas"}))
+            st.dataframe(tabla_np.style.format({"Horas": "{:,.1f}", "Costo M.O. ($)": "${:,.0f}"}),
+                         width='stretch', hide_index=True)
 
-    st.subheader("Costo acumulado en el tiempo")
-    acumulado = (
-        mo_f.sort_values("fecha")
-        .groupby("fecha", as_index=False)["costo_calculado"].sum()
-    )
-    acumulado["costo_acumulado"] = acumulado["costo_calculado"].cumsum()
-    fig3 = px.line(acumulado, x="fecha", y="costo_acumulado", markers=True,
-                    color_discrete_sequence=[VERDE_AIA])
-    fig3.update_traces(line=dict(width=3), marker=dict(size=8, color=VERDE_OSCURO))
-    st.plotly_chart(fig3, width='stretch')
-
-    st.subheader("📅 Resumen semanal por frente (lunes a sábado)")
-    st.caption(
-        "Para el corte de fin de semana: cuánto costó cada frente/intervención "
-        "en cada semana laboral. Usa el filtro de fecha en la barra lateral para "
-        "ver un día puntual en vez de la semana completa."
-    )
-    semanal_mo = (
-        mo_f.dropna(subset=["semana_lunes"])
-        .groupby(["semana_lunes", "semana_etiqueta", "frente", "frente_corto"], as_index=False)
-        .agg(costo_semana=("costo_calculado", "sum"), horas_semana=("horas", "sum"))
-        .sort_values("semana_lunes")
-    )
-    if semanal_mo.empty:
-        st.info("Todavía no hay suficientes fechas para armar el resumen semanal.")
-    else:
-        orden_semanas = semanal_mo.sort_values("semana_lunes")["semana_etiqueta"].unique()
-        figs = px.bar(
-            semanal_mo, x="semana_etiqueta", y="costo_semana", color="frente",
-            labels={"semana_etiqueta": "Semana", "costo_semana": "Costo ($)", "frente": "Frente"},
-            barmode="group", color_discrete_sequence=PALETA_CATEGORICA,
+        st.subheader("Costo acumulado en el tiempo")
+        acumulado = (
+            mo_f.sort_values("fecha")
+            .groupby("fecha", as_index=False)["costo_calculado"].sum()
         )
-        figs.update_xaxes(categoryorder="array", categoryarray=orden_semanas)
-        st.plotly_chart(figs, width='stretch')
+        acumulado["costo_acumulado"] = acumulado["costo_calculado"].cumsum()
+        fig3 = px.line(acumulado, x="fecha", y="costo_acumulado", markers=True,
+                        color_discrete_sequence=[VERDE_AIA])
+        fig3.update_traces(line=dict(width=3), marker=dict(size=8, color=VERDE_OSCURO))
+        st.plotly_chart(fig3, width='stretch')
 
-        st.markdown("**Matriz costo por semana y frente** _(columnas = código de frente)_")
-        matriz_mo = semanal_mo.pivot_table(
-            index="semana_etiqueta", columns="frente_corto", values="costo_semana",
-            aggfunc="sum", fill_value=0,
-        ).reindex(orden_semanas)
-        st.dataframe(matriz_mo.style.format(formato_pesos_millones), width='stretch')
-
-        st.markdown("**Horas por semana y frente** _(columnas = código de frente)_")
-        matriz_horas = semanal_mo.pivot_table(
-            index="semana_etiqueta", columns="frente_corto", values="horas_semana",
-            aggfunc="sum", fill_value=0,
-        ).reindex(orden_semanas)
-        st.dataframe(matriz_horas.style.format("{:,.1f}"), width='stretch')
-
-    with st.expander("Detalle de registros"):
-        st.dataframe(
-            mo_f[["fecha", "nombre", "cargo", "frente", "horas", "tipo_hora",
-                  "tarifa_hora", "costo_calculado", "semana_etiqueta"]].sort_values("fecha", ascending=False)
-            .rename(columns={"fecha": "Fecha", "nombre": "Nombre", "cargo": "Cargo", "frente": "Frente",
-                             "horas": "Horas", "tipo_hora": "Tipo de hora", "tarifa_hora": "Tarifa hora",
-                             "costo_calculado": "Costo", "semana_etiqueta": "Semana"}),
-            width='stretch',
+        st.subheader("📅 Resumen semanal por frente (lunes a sábado)")
+        st.caption(
+            "Para el corte de fin de semana: cuánto costó cada frente/intervención "
+            "en cada semana laboral. Usa el filtro de fecha en la barra lateral para "
+            "ver un día puntual en vez de la semana completa."
         )
+        semanal_mo = (
+            mo_f.dropna(subset=["semana_lunes"])
+            .groupby(["semana_lunes", "semana_etiqueta", "frente", "frente_corto"], as_index=False)
+            .agg(costo_semana=("costo_calculado", "sum"), horas_semana=("horas", "sum"))
+            .sort_values("semana_lunes")
+        )
+        if semanal_mo.empty:
+            st.info("Todavía no hay suficientes fechas para armar el resumen semanal.")
+        else:
+            orden_semanas = semanal_mo.sort_values("semana_lunes")["semana_etiqueta"].unique()
+            figs = px.bar(
+                semanal_mo, x="semana_etiqueta", y="costo_semana", color="frente",
+                labels={"semana_etiqueta": "Semana", "costo_semana": "Costo ($)", "frente": "Frente"},
+                barmode="group", color_discrete_sequence=PALETA_CATEGORICA,
+            )
+            figs.update_xaxes(categoryorder="array", categoryarray=orden_semanas)
+            st.plotly_chart(figs, width='stretch')
+
+            st.markdown("**Matriz costo por semana y frente** _(columnas = código de frente)_")
+            matriz_mo = semanal_mo.pivot_table(
+                index="semana_etiqueta", columns="frente_corto", values="costo_semana",
+                aggfunc="sum", fill_value=0,
+            ).reindex(orden_semanas)
+            st.dataframe(matriz_mo.style.format(formato_pesos_millones), width='stretch')
+
+            st.markdown("**Horas por semana y frente** _(columnas = código de frente)_")
+            matriz_horas = semanal_mo.pivot_table(
+                index="semana_etiqueta", columns="frente_corto", values="horas_semana",
+                aggfunc="sum", fill_value=0,
+            ).reindex(orden_semanas)
+            st.dataframe(matriz_horas.style.format("{:,.1f}"), width='stretch')
+
+        with st.expander("Detalle de registros"):
+            st.dataframe(
+                mo_f[["fecha", "nombre", "cargo", "frente", "horas", "tipo_hora",
+                      "tarifa_hora", "costo_calculado", "semana_etiqueta"]].sort_values("fecha", ascending=False)
+                .rename(columns={"fecha": "Fecha", "nombre": "Nombre", "cargo": "Cargo", "frente": "Frente",
+                                 "horas": "Horas", "tipo_hora": "Tipo de hora", "tarifa_hora": "Tarifa hora",
+                                 "costo_calculado": "Costo", "semana_etiqueta": "Semana"}),
+                width='stretch',
+            )
 
 # ============ TAB EQUIPOS ============
 if MOSTRAR_EQUIPOS:
@@ -831,169 +858,170 @@ if MOSTRAR_EQUIPOS:
     )
 
 # ============ TAB EFICIENCIA ============
-with tab3:
-    # ---------- NUEVO: rendimiento real por categoría (Mediciones × Horas) ----------
-    st.subheader("Rendimiento real por categoría — Mediciones de Oficiales × Horas de Maestros")
-    st.caption(
-        "Cada hora registrada se asigna a una categoría (A-K) según su código SINCO "
-        "(categorias_sinco.csv) y se cruza con la cantidad que midieron los Oficiales, "
-        "por **semana + frente + categoría**. El rendimiento es **integral**: incluye todas "
-        "las horas de la categoría (p. ej. en Concreto también el acero de refuerzo). "
-        "Ojo: si hay personal sin registrar, las horas salen bajas y el rendimiento sale "
-        "mejor de lo que es."
-    )
-    cruce = cruce_rendimiento(mo_f, med_f)
-    completos = cruce[cruce["estado"] == "✅ Cruce completo"]
-    if med_f.empty:
-        st.info(
-            "Todavía no hay mediciones de los Oficiales en el periodo/frentes filtrados. "
-            "Mientras tanto, esta tabla muestra las horas-hombre que ya están listas para cruzarse."
+if not VISTA_GERENCIA:
+    with tab3:
+        # ---------- NUEVO: rendimiento real por categoría (Mediciones × Horas) ----------
+        st.subheader("Rendimiento real por categoría — Mediciones de Oficiales × Horas de Maestros")
+        st.caption(
+            "Cada hora registrada se asigna a una categoría (A-K) según su código SINCO "
+            "(categorias_sinco.csv) y se cruza con la cantidad que midieron los Oficiales, "
+            "por **semana + frente + categoría**. El rendimiento es **integral**: incluye todas "
+            "las horas de la categoría (p. ej. en Concreto también el acero de refuerzo). "
+            "Ojo: si hay personal sin registrar, las horas salen bajas y el rendimiento sale "
+            "mejor de lo que es."
         )
-    # Resumen del periodo filtrado por frente × categoría (suma todas las semanas)
-    periodo = (completos.groupby(["frente_cod", "cat", "categoria", "unidad"], as_index=False)
-               .agg(HH=("HH", "sum"), costo=("costo", "sum"), cantidad=("cantidad", "sum")))
-    if not periodo.empty:
-        periodo["HH_por_unidad"] = periodo["HH"] / periodo["cantidad"]
-        periodo["costo_por_unidad"] = periodo["costo"] / periodo["cantidad"]
-        periodo = agregar_referencia(periodo)
+        cruce = cruce_rendimiento(mo_f, med_f)
+        completos = cruce[cruce["estado"] == "✅ Cruce completo"]
+        if med_f.empty:
+            st.info(
+                "Todavía no hay mediciones de los Oficiales en el periodo/frentes filtrados. "
+                "Mientras tanto, esta tabla muestra las horas-hombre que ya están listas para cruzarse."
+            )
+        # Resumen del periodo filtrado por frente × categoría (suma todas las semanas)
+        periodo = (completos.groupby(["frente_cod", "cat", "categoria", "unidad"], as_index=False)
+                   .agg(HH=("HH", "sum"), costo=("costo", "sum"), cantidad=("cantidad", "sum")))
+        if not periodo.empty:
+            periodo["HH_por_unidad"] = periodo["HH"] / periodo["cantidad"]
+            periodo["costo_por_unidad"] = periodo["costo"] / periodo["cantidad"]
+            periodo = agregar_referencia(periodo)
 
-    k1, k2, k3, k4 = st.columns(4)
-    n_sem = periodo["semaforo"].value_counts() if not periodo.empty else pd.Series(dtype=int)
-    k1.metric("🟢 Igual o mejor que la referencia", int(n_sem.get("🟢", 0)))
-    k2.metric("🟡 Hasta 20 % por encima", int(n_sem.get("🟡", 0)))
-    k3.metric("🔴 Más de 20 % por encima", int(n_sem.get("🔴", 0)))
-    dif = periodo["diferencia_pesos"].sum() if not periodo.empty else 0
-    k4.metric("Mayor costo (+) / ahorro (−) vs. referencia", f"$ {dif:,.0f}")
-    st.caption(
-        "Referencia = HH por unidad de cada frente y categoría (APU SINCO ponderado con "
-        "rendimientos públicos y factor de terminal en operación). 🟢 real ≤ referencia · "
-        f"🟡 hasta {int((SEMAFORO_AMARILLO - 1) * 100)} % por encima · 🔴 más que eso. "
-        "Menos HH por unidad = más productivo."
-    )
-    k5, k6 = st.columns(2)
-    k5.metric("Horas sin medición", f"{cruce.loc[cruce['estado'] == '⏳ Horas sin medición', 'HH'].sum():,.0f} h")
-    k6.metric("Mediciones sin horas", int((cruce["estado"] == "⚠️ Medición sin horas").sum()))
-
-    if not periodo.empty and periodo["ref_hh_unidad"].notna().any():
-        g = periodo[periodo["ref_hh_unidad"].notna()].copy()
-        g["etiqueta"] = g["semaforo"] + " " + g["frente_cod"] + " · " + g["categoria"] + " (" + g["unidad"] + ")"
-        g = g.sort_values("indice")
-        largo = g.melt(id_vars=["etiqueta"], value_vars=["HH_por_unidad", "ref_hh_unidad"],
-                       var_name="serie", value_name="HH/unidad")
-        largo["serie"] = largo["serie"].map({"HH_por_unidad": "Real", "ref_hh_unidad": "Referencia"})
-        fig_ref = px.bar(
-            largo, x="HH/unidad", y="etiqueta", color="serie", barmode="group", orientation="h",
-            color_discrete_map={"Real": VERDE_AIA, "Referencia": GRIS_NEUTRO},
-            labels={"etiqueta": "Frente · Categoría", "serie": ""},
-            title="Horas-hombre por unidad: real vs. referencia (periodo filtrado)",
+        k1, k2, k3, k4 = st.columns(4)
+        n_sem = periodo["semaforo"].value_counts() if not periodo.empty else pd.Series(dtype=int)
+        k1.metric("🟢 Igual o mejor que la referencia", int(n_sem.get("🟢", 0)))
+        k2.metric("🟡 Hasta 20 % por encima", int(n_sem.get("🟡", 0)))
+        k3.metric("🔴 Más de 20 % por encima", int(n_sem.get("🔴", 0)))
+        dif = periodo["diferencia_pesos"].sum() if not periodo.empty else 0
+        k4.metric("Mayor costo (+) / ahorro (−) vs. referencia", f"$ {dif:,.0f}")
+        st.caption(
+            "Referencia = HH por unidad de cada frente y categoría (APU SINCO ponderado con "
+            "rendimientos públicos y factor de terminal en operación). 🟢 real ≤ referencia · "
+            f"🟡 hasta {int((SEMAFORO_AMARILLO - 1) * 100)} % por encima · 🔴 más que eso. "
+            "Menos HH por unidad = más productivo."
         )
-        fig_ref.update_layout(height=max(320, 60 * len(g)), yaxis={"categoryorder": "array",
-                              "categoryarray": g["etiqueta"].tolist()[::-1]})
-        st.plotly_chart(fig_ref, width='stretch')
+        k5, k6 = st.columns(2)
+        k5.metric("Horas sin medición", f"{cruce.loc[cruce['estado'] == '⏳ Horas sin medición', 'HH'].sum():,.0f} h")
+        k6.metric("Mediciones sin horas", int((cruce["estado"] == "⚠️ Medición sin horas").sum()))
 
-        st.markdown("**Resumen del periodo por frente y categoría**")
-        tabla_p = g[["semaforo", "frente_cod", "categoria", "unidad", "HH", "cantidad", "HH_por_unidad",
-                     "ref_hh_unidad", "indice", "costo_por_unidad", "costo_ref_por_unidad",
-                     "diferencia_pesos"]].rename(columns={
-            "semaforo": "", "frente_cod": "Frente", "categoria": "Categoría", "unidad": "Unidad",
-            "HH": "Horas-hombre", "cantidad": "Cantidad medida", "HH_por_unidad": "HH/u real",
-            "ref_hh_unidad": "HH/u referencia", "indice": "Real ÷ ref.", "costo_por_unidad": "$/u real",
-            "costo_ref_por_unidad": "$/u referencia", "diferencia_pesos": "Mayor costo (+) / ahorro (−)"})
+        if not periodo.empty and periodo["ref_hh_unidad"].notna().any():
+            g = periodo[periodo["ref_hh_unidad"].notna()].copy()
+            g["etiqueta"] = g["semaforo"] + " " + g["frente_cod"] + " · " + g["categoria"] + " (" + g["unidad"] + ")"
+            g = g.sort_values("indice")
+            largo = g.melt(id_vars=["etiqueta"], value_vars=["HH_por_unidad", "ref_hh_unidad"],
+                           var_name="serie", value_name="HH/unidad")
+            largo["serie"] = largo["serie"].map({"HH_por_unidad": "Real", "ref_hh_unidad": "Referencia"})
+            fig_ref = px.bar(
+                largo, x="HH/unidad", y="etiqueta", color="serie", barmode="group", orientation="h",
+                color_discrete_map={"Real": VERDE_AIA, "Referencia": GRIS_NEUTRO},
+                labels={"etiqueta": "Frente · Categoría", "serie": ""},
+                title="Horas-hombre por unidad: real vs. referencia (periodo filtrado)",
+            )
+            fig_ref.update_layout(height=max(320, 60 * len(g)), yaxis={"categoryorder": "array",
+                                  "categoryarray": g["etiqueta"].tolist()[::-1]})
+            st.plotly_chart(fig_ref, width='stretch')
+
+            st.markdown("**Resumen del periodo por frente y categoría**")
+            tabla_p = g[["semaforo", "frente_cod", "categoria", "unidad", "HH", "cantidad", "HH_por_unidad",
+                         "ref_hh_unidad", "indice", "costo_por_unidad", "costo_ref_por_unidad",
+                         "diferencia_pesos"]].rename(columns={
+                "semaforo": "", "frente_cod": "Frente", "categoria": "Categoría", "unidad": "Unidad",
+                "HH": "Horas-hombre", "cantidad": "Cantidad medida", "HH_por_unidad": "HH/u real",
+                "ref_hh_unidad": "HH/u referencia", "indice": "Real ÷ ref.", "costo_por_unidad": "$/u real",
+                "costo_ref_por_unidad": "$/u referencia", "diferencia_pesos": "Mayor costo (+) / ahorro (−)"})
+            st.dataframe(
+                tabla_p.style.format({
+                    "Horas-hombre": "{:,.1f}", "Cantidad medida": "{:,.2f}", "HH/u real": "{:,.2f}",
+                    "HH/u referencia": "{:,.2f}", "Real ÷ ref.": "{:,.2f}", "$/u real": "${:,.0f}",
+                    "$/u referencia": "${:,.0f}", "Mayor costo (+) / ahorro (−)": "${:,.0f}",
+                }, na_rep="—"),
+                width='stretch', hide_index=True,
+            )
+
+        st.markdown("**Detalle por semana**")
+        tabla = cruce[["semaforo", "semana_etiqueta", "frente_cod", "categoria", "unidad", "HH", "costo",
+                       "cantidad", "HH_por_unidad", "ref_hh_unidad", "costo_por_unidad", "estado"]].rename(columns={
+            "semaforo": "", "semana_etiqueta": "Semana", "frente_cod": "Frente", "categoria": "Categoría",
+            "unidad": "Unidad", "HH": "Horas-hombre", "costo": "Costo M.O. ($)",
+            "cantidad": "Cantidad medida", "HH_por_unidad": "HH/u real", "ref_hh_unidad": "HH/u referencia",
+            "costo_por_unidad": "$ / unidad", "estado": "Estado"})
         st.dataframe(
-            tabla_p.style.format({
-                "Horas-hombre": "{:,.1f}", "Cantidad medida": "{:,.2f}", "HH/u real": "{:,.2f}",
-                "HH/u referencia": "{:,.2f}", "Real ÷ ref.": "{:,.2f}", "$/u real": "${:,.0f}",
-                "$/u referencia": "${:,.0f}", "Mayor costo (+) / ahorro (−)": "${:,.0f}",
+            tabla.style.format({
+                "Horas-hombre": "{:,.1f}", "Costo M.O. ($)": "${:,.0f}", "Cantidad medida": "{:,.2f}",
+                "HH/u real": "{:,.2f}", "HH/u referencia": "{:,.2f}", "$ / unidad": "${:,.0f}",
             }, na_rep="—"),
             width='stretch', hide_index=True,
         )
 
-    st.markdown("**Detalle por semana**")
-    tabla = cruce[["semaforo", "semana_etiqueta", "frente_cod", "categoria", "unidad", "HH", "costo",
-                   "cantidad", "HH_por_unidad", "ref_hh_unidad", "costo_por_unidad", "estado"]].rename(columns={
-        "semaforo": "", "semana_etiqueta": "Semana", "frente_cod": "Frente", "categoria": "Categoría",
-        "unidad": "Unidad", "HH": "Horas-hombre", "costo": "Costo M.O. ($)",
-        "cantidad": "Cantidad medida", "HH_por_unidad": "HH/u real", "ref_hh_unidad": "HH/u referencia",
-        "costo_por_unidad": "$ / unidad", "estado": "Estado"})
-    st.dataframe(
-        tabla.style.format({
-            "Horas-hombre": "{:,.1f}", "Costo M.O. ($)": "${:,.0f}", "Cantidad medida": "{:,.2f}",
-            "HH/u real": "{:,.2f}", "HH/u referencia": "{:,.2f}", "$ / unidad": "${:,.0f}",
-        }, na_rep="—"),
-        width='stretch', hide_index=True,
-    )
+        st.divider()
+        st.subheader("Cumplimiento de productividad por actividad")
+        st.caption(
+            "Compara la cantidad ejecutada (reportada por el maestro) contra la cantidad "
+            "esperada según el rendimiento presupuestado de Ayudantes, Oficiales y Maestros "
+            "en esa actividad. **Las horas de Maestro se comparan con la tasa 'Otro'** del "
+            "catálogo de rendimientos — su trabajo suele ser más de supervisión, así que "
+            "esta tasa es más general que la de Ayudante/Oficial."
+        )
 
-    st.divider()
-    st.subheader("Cumplimiento de productividad por actividad")
-    st.caption(
-        "Compara la cantidad ejecutada (reportada por el maestro) contra la cantidad "
-        "esperada según el rendimiento presupuestado de Ayudantes, Oficiales y Maestros "
-        "en esa actividad. **Las horas de Maestro se comparan con la tasa 'Otro'** del "
-        "catálogo de rendimientos — su trabajo suele ser más de supervisión, así que "
-        "esta tasa es más general que la de Ayudante/Oficial."
-    )
+        efi = calcular_eficiencia(mo)
 
-    efi = calcular_eficiencia(mo)
+        if efi is None:
+            st.warning(
+                "⚠️ Todavía no has agregado la columna **loteId** a la hoja 'Registros' "
+                "de tu Google Sheet. Agrégala en la primera fila (después de 'registradoPor') "
+                "para que este cálculo empiece a funcionar."
+            )
+        elif efi.empty:
+            st.info(
+                "Todavía no hay registros con 'cantidad ejecutada' diligenciada desde la app, "
+                "o ninguno tiene personal de cargo Ayudante/Oficial para calcular el rendimiento "
+                "esperado."
+            )
+        else:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Bloques con dato de producción", len(efi))
+            c2.metric("Eficiencia promedio", f"{efi['eficiencia_pct'].mean():.0f}%")
+            c3.metric("Bloques por debajo del 80%", int((efi["eficiencia_pct"] < 80).sum()))
 
-    if efi is None:
-        st.warning(
-            "⚠️ Todavía no has agregado la columna **loteId** a la hoja 'Registros' "
-            "de tu Google Sheet. Agrégala en la primera fila (después de 'registradoPor') "
-            "para que este cálculo empiece a funcionar."
-        )
-    elif efi.empty:
-        st.info(
-            "Todavía no hay registros con 'cantidad ejecutada' diligenciada desde la app, "
-            "o ninguno tiene personal de cargo Ayudante/Oficial para calcular el rendimiento "
-            "esperado."
-        )
-    else:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Bloques con dato de producción", len(efi))
-        c2.metric("Eficiencia promedio", f"{efi['eficiencia_pct'].mean():.0f}%")
-        c3.metric("Bloques por debajo del 80%", int((efi["eficiencia_pct"] < 80).sum()))
+            st.subheader("Eficiencia por actividad")
+            por_actividad = efi.groupby("descripcion_actividad", as_index=False).agg(
+                cantidad_ejecutada=("cantidad_ejecutada", "sum"),
+                cantidad_esperada=("cantidad_esperada", "sum"),
+                horas_productivas=("horas_productivas", "sum"),
+            )
+            por_actividad["eficiencia_pct"] = (
+                100 * por_actividad["cantidad_ejecutada"] / por_actividad["cantidad_esperada"]
+            )
+            fig_efi = px.bar(
+                por_actividad.sort_values("eficiencia_pct"),
+                x="eficiencia_pct", y="descripcion_actividad", orientation="h",
+                labels={"eficiencia_pct": "Eficiencia (%)", "descripcion_actividad": "Actividad"},
+                color="eficiencia_pct", color_continuous_scale=[DORADO_ACENTO, VERDE_CLARO, VERDE_AIA],
+            )
+            fig_efi.add_vline(x=100, line_dash="dash", line_color=GRIS_NEUTRO)
+            fig_efi.update_layout(coloraxis_showscale=False, yaxis={"tickfont": {"size": 10}})
+            st.plotly_chart(fig_efi, width='stretch')
 
-        st.subheader("Eficiencia por actividad")
-        por_actividad = efi.groupby("descripcion_actividad", as_index=False).agg(
-            cantidad_ejecutada=("cantidad_ejecutada", "sum"),
-            cantidad_esperada=("cantidad_esperada", "sum"),
-            horas_productivas=("horas_productivas", "sum"),
-        )
-        por_actividad["eficiencia_pct"] = (
-            100 * por_actividad["cantidad_ejecutada"] / por_actividad["cantidad_esperada"]
-        )
-        fig_efi = px.bar(
-            por_actividad.sort_values("eficiencia_pct"),
-            x="eficiencia_pct", y="descripcion_actividad", orientation="h",
-            labels={"eficiencia_pct": "Eficiencia (%)", "descripcion_actividad": "Actividad"},
-            color="eficiencia_pct", color_continuous_scale=[DORADO_ACENTO, VERDE_CLARO, VERDE_AIA],
-        )
-        fig_efi.add_vline(x=100, line_dash="dash", line_color=GRIS_NEUTRO)
-        fig_efi.update_layout(coloraxis_showscale=False, yaxis={"tickfont": {"size": 10}})
-        st.plotly_chart(fig_efi, width='stretch')
+            st.subheader("Eficiencia por frente")
+            por_frente = efi.groupby("frente", as_index=False).agg(
+                cantidad_ejecutada=("cantidad_ejecutada", "sum"),
+                cantidad_esperada=("cantidad_esperada", "sum"),
+            )
+            por_frente["eficiencia_pct"] = 100 * por_frente["cantidad_ejecutada"] / por_frente["cantidad_esperada"]
+            fig_frente = px.bar(
+                por_frente.sort_values("eficiencia_pct"),
+                x="eficiencia_pct", y="frente", orientation="h",
+                color="eficiencia_pct", color_continuous_scale=[DORADO_ACENTO, VERDE_CLARO, VERDE_AIA],
+            )
+            fig_frente.add_vline(x=100, line_dash="dash", line_color=GRIS_NEUTRO)
+            fig_frente.update_layout(coloraxis_showscale=False)
+            st.plotly_chart(fig_frente, width='stretch')
 
-        st.subheader("Eficiencia por frente")
-        por_frente = efi.groupby("frente", as_index=False).agg(
-            cantidad_ejecutada=("cantidad_ejecutada", "sum"),
-            cantidad_esperada=("cantidad_esperada", "sum"),
-        )
-        por_frente["eficiencia_pct"] = 100 * por_frente["cantidad_ejecutada"] / por_frente["cantidad_esperada"]
-        fig_frente = px.bar(
-            por_frente.sort_values("eficiencia_pct"),
-            x="eficiencia_pct", y="frente", orientation="h",
-            color="eficiencia_pct", color_continuous_scale=[DORADO_ACENTO, VERDE_CLARO, VERDE_AIA],
-        )
-        fig_frente.add_vline(x=100, line_dash="dash", line_color=GRIS_NEUTRO)
-        fig_frente.update_layout(coloraxis_showscale=False)
-        st.plotly_chart(fig_frente, width='stretch')
-
-        st.subheader("Detalle por bloque")
-        st.dataframe(
-            efi[["fecha", "frente", "descripcion_actividad", "unidad", "cantidad_ejecutada",
-                 "cantidad_esperada", "horas_productivas", "eficiencia_pct"]]
-            .sort_values("fecha", ascending=False),
-            width='stretch',
-        )
+            st.subheader("Detalle por bloque")
+            st.dataframe(
+                efi[["fecha", "frente", "descripcion_actividad", "unidad", "cantidad_ejecutada",
+                     "cantidad_esperada", "horas_productivas", "eficiencia_pct"]]
+                .sort_values("fecha", ascending=False),
+                width='stretch',
+            )
 
 # ============ TAB COBERTURA DE REGISTRO (1-oct-2026) ============
 # Quién del personal de obra (maestros, oficiales y ayudantes del Maestro de Personal) tiene
@@ -1001,67 +1029,68 @@ with tab3:
 FESTIVOS_2026 = {"2026-01-01", "2026-01-12", "2026-03-23", "2026-04-02", "2026-04-03", "2026-05-01", "2026-05-18",
                  "2026-06-08", "2026-06-15", "2026-06-29", "2026-07-20", "2026-08-07", "2026-08-17", "2026-10-12",
                  "2026-11-02", "2026-11-16", "2026-12-08", "2026-12-25"}
-with tab8:
-    st.subheader("Cobertura de registro del personal de obra")
-    semanas_cob = (mo.dropna(subset=["semana_lunes", "semana_etiqueta"]).drop_duplicates("semana_etiqueta")
-                   .sort_values("semana_lunes", ascending=False))
-    if semanas_cob.empty:
-        st.info("No hay registros todavía.")
-    else:
-        hoy = pd.Timestamp.now(tz="America/Bogota").tz_localize(None).normalize()
-        opciones = semanas_cob["semana_etiqueta"].tolist()
-        lunes_list = semanas_cob["semana_lunes"].tolist()
-        # por defecto la última semana ya cerrada (si la actual va empezando, la anterior)
-        idx = 1 if len(opciones) > 1 and (hoy - pd.Timestamp(lunes_list[0])).days < 2 else 0
-        c1, c2 = st.columns([2, 1])
-        sem = c1.selectbox("Semana", opciones, index=idx)
-        incluir_sab = c2.checkbox("Contar el sábado", value=True)
-        lunes = pd.Timestamp(lunes_list[opciones.index(sem)])
-        dias = [lunes + pd.Timedelta(days=i) for i in range(6 if incluir_sab else 5)]
-        dias = [d for d in dias if d.strftime("%Y-%m-%d") not in FESTIVOS_2026 and d < hoy]
-        roster = tarifas[tarifas["CargoReal"].astype(str).str.contains("Maestro|Oficial|Ayudante", case=False, na=False)]
-        roster = roster[["NombreCompleto" if "NombreCompleto" in roster.columns else "NombreNormalizado", "CargoReal", "nombre_norm"]]
-        roster.columns = ["Persona", "Cargo", "nombre_norm"]
-        reg = mo[mo["fecha"].isin(dias)]
-        hechos = reg.groupby("nombre_norm")["fecha"].apply(lambda s: set(s.dt.normalize())).to_dict()
-        horas_dia = reg.groupby(["nombre_norm", reg["fecha"].dt.normalize()])["horas"].sum().to_dict()
-        etiquetas = {d: ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"][d.dayofweek] + f" {d.day}" for d in dias}
-        filas = []
-        for p_ in roster.itertuples():
-            tiene = hechos.get(p_.nombre_norm, set())
-            n = sum(1 for d in dias if d in tiene)
-            estado = "Completo" if dias and n == len(dias) else ("Parcial" if n else "Sin registro")
-            fila = {"Estado": estado, "Persona": p_.Persona, "Cargo": str(p_.Cargo).replace("_", " ")}
-            for d in dias:
-                h = horas_dia.get((p_.nombre_norm, d))
-                fila[etiquetas[d]] = f"{h:g} h" if h else "—"
-            fila["Días"] = f"{n}/{len(dias)}"
-            filas.append(fila)
-        cob = pd.DataFrame(filas)
-        if cob.empty or not dias:
-            st.info("Sin días hábiles cerrados en esa semana.")
+if not VISTA_GERENCIA:
+    with tab8:
+        st.subheader("Cobertura de registro del personal de obra")
+        semanas_cob = (mo.dropna(subset=["semana_lunes", "semana_etiqueta"]).drop_duplicates("semana_etiqueta")
+                       .sort_values("semana_lunes", ascending=False))
+        if semanas_cob.empty:
+            st.info("No hay registros todavía.")
         else:
-            orden_est = {"Sin registro": 0, "Parcial": 1, "Completo": 2}
-            cob = cob.sort_values(["Estado", "Persona"], key=lambda s: s.map(orden_est) if s.name == "Estado" else s)
-            n_c, n_p, n_s = [(cob["Estado"] == e).sum() for e in ("Completo", "Parcial", "Sin registro")]
-            k1, k2, k3 = st.columns(3)
-            k1.metric("🟢 Registro completo", f"{n_c} de {len(cob)}")
-            k2.metric("🟡 Registro parcial", n_p)
-            k3.metric("🔴 Sin ningún registro", n_s)
-            st.caption(f"Personal de obra del Maestro de Personal (maestros, oficiales y ayudantes) · {len(dias)} día(s) hábil(es) "
-                       "ya cerrados, sin festivos. Cada casilla muestra las horas registradas ese día.")
-            filtro = st.multiselect("Mostrar", ["Sin registro", "Parcial", "Completo"], default=["Sin registro", "Parcial", "Completo"])
-            vista = cob[cob["Estado"].isin(filtro)]
-            colores = {"Sin registro": "background-color:#FDEBEA;color:#B4453A;font-weight:600",
-                       "Parcial": "background-color:#FFF3CD;color:#7A5E00;font-weight:600",
-                       "Completo": "background-color:#E2EFDA;color:#1A5632;font-weight:600"}
-            cols_dia = [etiquetas[d] for d in dias]
-            st.dataframe(
-                vista.style.map(lambda v: colores.get(v, ""), subset=["Estado"])
-                .map(lambda v: "color:#B4453A" if v == "—" else "color:#1A5632", subset=cols_dia),
-                width='stretch', hide_index=True, height=min(38 * (len(vista) + 1), 900))
-            st.download_button("⬇️ Descargar cobertura (CSV)", cob.to_csv(index=False).encode("utf-8"),
-                               file_name=f"cobertura_{lunes:%Y-%m-%d}.csv", mime="text/csv")
+            hoy = pd.Timestamp.now(tz="America/Bogota").tz_localize(None).normalize()
+            opciones = semanas_cob["semana_etiqueta"].tolist()
+            lunes_list = semanas_cob["semana_lunes"].tolist()
+            # por defecto la última semana ya cerrada (si la actual va empezando, la anterior)
+            idx = 1 if len(opciones) > 1 and (hoy - pd.Timestamp(lunes_list[0])).days < 2 else 0
+            c1, c2 = st.columns([2, 1])
+            sem = c1.selectbox("Semana", opciones, index=idx)
+            incluir_sab = c2.checkbox("Contar el sábado", value=True)
+            lunes = pd.Timestamp(lunes_list[opciones.index(sem)])
+            dias = [lunes + pd.Timedelta(days=i) for i in range(6 if incluir_sab else 5)]
+            dias = [d for d in dias if d.strftime("%Y-%m-%d") not in FESTIVOS_2026 and d < hoy]
+            roster = tarifas[tarifas["CargoReal"].astype(str).str.contains("Maestro|Oficial|Ayudante", case=False, na=False)]
+            roster = roster[["NombreCompleto" if "NombreCompleto" in roster.columns else "NombreNormalizado", "CargoReal", "nombre_norm"]]
+            roster.columns = ["Persona", "Cargo", "nombre_norm"]
+            reg = mo[mo["fecha"].isin(dias)]
+            hechos = reg.groupby("nombre_norm")["fecha"].apply(lambda s: set(s.dt.normalize())).to_dict()
+            horas_dia = reg.groupby(["nombre_norm", reg["fecha"].dt.normalize()])["horas"].sum().to_dict()
+            etiquetas = {d: ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"][d.dayofweek] + f" {d.day}" for d in dias}
+            filas = []
+            for p_ in roster.itertuples():
+                tiene = hechos.get(p_.nombre_norm, set())
+                n = sum(1 for d in dias if d in tiene)
+                estado = "Completo" if dias and n == len(dias) else ("Parcial" if n else "Sin registro")
+                fila = {"Estado": estado, "Persona": p_.Persona, "Cargo": str(p_.Cargo).replace("_", " ")}
+                for d in dias:
+                    h = horas_dia.get((p_.nombre_norm, d))
+                    fila[etiquetas[d]] = f"{h:g} h" if h else "—"
+                fila["Días"] = f"{n}/{len(dias)}"
+                filas.append(fila)
+            cob = pd.DataFrame(filas)
+            if cob.empty or not dias:
+                st.info("Sin días hábiles cerrados en esa semana.")
+            else:
+                orden_est = {"Sin registro": 0, "Parcial": 1, "Completo": 2}
+                cob = cob.sort_values(["Estado", "Persona"], key=lambda s: s.map(orden_est) if s.name == "Estado" else s)
+                n_c, n_p, n_s = [(cob["Estado"] == e).sum() for e in ("Completo", "Parcial", "Sin registro")]
+                k1, k2, k3 = st.columns(3)
+                k1.metric("🟢 Registro completo", f"{n_c} de {len(cob)}")
+                k2.metric("🟡 Registro parcial", n_p)
+                k3.metric("🔴 Sin ningún registro", n_s)
+                st.caption(f"Personal de obra del Maestro de Personal (maestros, oficiales y ayudantes) · {len(dias)} día(s) hábil(es) "
+                           "ya cerrados, sin festivos. Cada casilla muestra las horas registradas ese día.")
+                filtro = st.multiselect("Mostrar", ["Sin registro", "Parcial", "Completo"], default=["Sin registro", "Parcial", "Completo"])
+                vista = cob[cob["Estado"].isin(filtro)]
+                colores = {"Sin registro": "background-color:#FDEBEA;color:#B4453A;font-weight:600",
+                           "Parcial": "background-color:#FFF3CD;color:#7A5E00;font-weight:600",
+                           "Completo": "background-color:#E2EFDA;color:#1A5632;font-weight:600"}
+                cols_dia = [etiquetas[d] for d in dias]
+                st.dataframe(
+                    vista.style.map(lambda v: colores.get(v, ""), subset=["Estado"])
+                    .map(lambda v: "color:#B4453A" if v == "—" else "color:#1A5632", subset=cols_dia),
+                    width='stretch', hide_index=True, height=min(38 * (len(vista) + 1), 900))
+                st.download_button("⬇️ Descargar cobertura (CSV)", cob.to_csv(index=False).encode("utf-8"),
+                                   file_name=f"cobertura_{lunes:%Y-%m-%d}.csv", mime="text/csv")
 
 # ============ TAB CARGO VS. TAREA (1-oct-2026) ============
 # Oficiales y maestros haciendo trabajo de ayudante (demolición, excavación, escombros, aseo,
@@ -1087,74 +1116,75 @@ try:
 except Exception:
     MAPA_CAT = {}
 
-with tab7:
-    st.subheader("Oficiales y maestros en tareas de ayudante")
-    st.caption("Horas de oficiales y maestros en demolición, excavación, escombros/trasiego, aseo y acarreo. "
-               "**Sobrecosto** = horas × (tarifa de la persona − tarifa promedio de ayudante) × factor del tipo de hora. "
-               "La supervisión registrada por los maestros no cuenta. Respeta los filtros de la barra lateral.")
-    t_ay = tarifas.loc[tarifas["CargoReal"].astype(str).str.contains("Ayudante", case=False, na=False), "TarifaHoraReal"]
-    tarifa_ayud = float(t_ay[t_ay > 0].mean()) if len(t_ay) else 0.0
-    cargo_real = dict(zip(tarifas["nombre_norm"], tarifas["CargoReal"].astype(str)))
-    d = mo_f.copy()
-    d["cargo_real"] = d["nombre_norm"].map(cargo_real).fillna(d["cargo"].astype(str))
-    d = d[d["cargo_real"].str.contains("Oficial|Maestro", case=False, na=False)]
-    d = d[[es_tarea_ayudante(c, a, o) for c, a, o in zip(d["codact"], d["actDesc"], d["observaciones"])]]
-    d["sobrecosto"] = d["horas"] * (d["tarifa_hora"] - tarifa_ayud).clip(lower=0) * d["Factor"]
-    if d.empty:
-        st.success("Sin oficiales ni maestros en tareas de ayudante en el periodo filtrado.")
-    else:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Personas", d["nombre"].nunique())
-        c2.metric("Horas en tareas de ayudante", f"{d['horas'].sum():,.0f} h")
-        c3.metric("Sobrecosto vs. hacerlo con ayudantes", f"$ {d['sobrecosto'].sum():,.0f}")
-        st.caption(f"Tarifa promedio de ayudante: $ {tarifa_ayud:,.0f}/h (Maestro de Personal).")
-        por_p = (d.groupby(["nombre", "cargo_real"], as_index=False)
-                 .agg(horas=("horas", "sum"), sobrecosto=("sobrecosto", "sum"), frentes=("codfrente", lambda s: ", ".join(sorted(set(s.astype(str)))))))
-        por_p = por_p.sort_values("sobrecosto", ascending=False)
-        fig_ay = px.bar(por_p.head(15).sort_values("sobrecosto"), x="sobrecosto", y="nombre", orientation="h",
-                        color_discrete_sequence=[DORADO_ACENTO],
-                        labels={"sobrecosto": "Sobrecosto ($)", "nombre": ""}, title="Sobrecosto por persona")
-        st.plotly_chart(fig_ay, width='stretch')
-        st.dataframe(por_p.rename(columns={"nombre": "Persona", "cargo_real": "Cargo", "horas": "Horas",
-                                           "sobrecosto": "Sobrecosto ($)", "frentes": "Frentes"})
-                     .style.format({"Horas": "{:,.1f}", "Sobrecosto ($)": "${:,.0f}"}), width='stretch', hide_index=True)
-        st.markdown("**Detalle por semana y actividad**")
-        det = (d.assign(actividad=d["actDesc"].astype(str).str.replace("[NO PRESUPUESTADA] ", "", regex=False).str.split("(").str[0].str.strip().str[:70])
-               .groupby(["semana_etiqueta", "nombre", "codact", "actividad"], as_index=False)
-               .agg(horas=("horas", "sum"), sobrecosto=("sobrecosto", "sum"))
-               .sort_values(["semana_etiqueta", "sobrecosto"], ascending=[True, False]))
-        st.dataframe(det.rename(columns={"semana_etiqueta": "Semana", "nombre": "Persona", "codact": "Código",
-                                         "actividad": "Actividad", "horas": "Horas", "sobrecosto": "Sobrecosto ($)"})
-                     .style.format({"Horas": "{:,.1f}", "Sobrecosto ($)": "${:,.0f}"}), width='stretch', hide_index=True)
+if not VISTA_GERENCIA:
+    with tab7:
+        st.subheader("Oficiales y maestros en tareas de ayudante")
+        st.caption("Horas de oficiales y maestros en demolición, excavación, escombros/trasiego, aseo y acarreo. "
+                   "**Sobrecosto** = horas × (tarifa de la persona − tarifa promedio de ayudante) × factor del tipo de hora. "
+                   "La supervisión registrada por los maestros no cuenta. Respeta los filtros de la barra lateral.")
+        t_ay = tarifas.loc[tarifas["CargoReal"].astype(str).str.contains("Ayudante", case=False, na=False), "TarifaHoraReal"]
+        tarifa_ayud = float(t_ay[t_ay > 0].mean()) if len(t_ay) else 0.0
+        cargo_real = dict(zip(tarifas["nombre_norm"], tarifas["CargoReal"].astype(str)))
+        d = mo_f.copy()
+        d["cargo_real"] = d["nombre_norm"].map(cargo_real).fillna(d["cargo"].astype(str))
+        d = d[d["cargo_real"].str.contains("Oficial|Maestro", case=False, na=False)]
+        d = d[[es_tarea_ayudante(c, a, o) for c, a, o in zip(d["codact"], d["actDesc"], d["observaciones"])]]
+        d["sobrecosto"] = d["horas"] * (d["tarifa_hora"] - tarifa_ayud).clip(lower=0) * d["Factor"]
+        if d.empty:
+            st.success("Sin oficiales ni maestros en tareas de ayudante en el periodo filtrado.")
+        else:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Personas", d["nombre"].nunique())
+            c2.metric("Horas en tareas de ayudante", f"{d['horas'].sum():,.0f} h")
+            c3.metric("Sobrecosto vs. hacerlo con ayudantes", f"$ {d['sobrecosto'].sum():,.0f}")
+            st.caption(f"Tarifa promedio de ayudante: $ {tarifa_ayud:,.0f}/h (Maestro de Personal).")
+            por_p = (d.groupby(["nombre", "cargo_real"], as_index=False)
+                     .agg(horas=("horas", "sum"), sobrecosto=("sobrecosto", "sum"), frentes=("codfrente", lambda s: ", ".join(sorted(set(s.astype(str)))))))
+            por_p = por_p.sort_values("sobrecosto", ascending=False)
+            fig_ay = px.bar(por_p.head(15).sort_values("sobrecosto"), x="sobrecosto", y="nombre", orientation="h",
+                            color_discrete_sequence=[DORADO_ACENTO],
+                            labels={"sobrecosto": "Sobrecosto ($)", "nombre": ""}, title="Sobrecosto por persona")
+            st.plotly_chart(fig_ay, width='stretch')
+            st.dataframe(por_p.rename(columns={"nombre": "Persona", "cargo_real": "Cargo", "horas": "Horas",
+                                               "sobrecosto": "Sobrecosto ($)", "frentes": "Frentes"})
+                         .style.format({"Horas": "{:,.1f}", "Sobrecosto ($)": "${:,.0f}"}), width='stretch', hide_index=True)
+            st.markdown("**Detalle por semana y actividad**")
+            det = (d.assign(actividad=d["actDesc"].astype(str).str.replace("[NO PRESUPUESTADA] ", "", regex=False).str.split("(").str[0].str.strip().str[:70])
+                   .groupby(["semana_etiqueta", "nombre", "codact", "actividad"], as_index=False)
+                   .agg(horas=("horas", "sum"), sobrecosto=("sobrecosto", "sum"))
+                   .sort_values(["semana_etiqueta", "sobrecosto"], ascending=[True, False]))
+            st.dataframe(det.rename(columns={"semana_etiqueta": "Semana", "nombre": "Persona", "codact": "Código",
+                                             "actividad": "Actividad", "horas": "Horas", "sobrecosto": "Sobrecosto ($)"})
+                         .style.format({"Horas": "{:,.1f}", "Sobrecosto ($)": "${:,.0f}"}), width='stretch', hide_index=True)
 
-    st.divider()
-    st.subheader("Jornada de supervisión de los maestros")
-    st.caption("Registros hechos con la opción 'Hoy solo supervisé' de la app. Su costo ya está repartido entre las actividades "
-               "de la cuadrilla. Aquí se revisan horas, extras y lo que hicieron fuera del horario de la cuadrilla.")
-    sup = mo_f[mo_f["observaciones"].astype(str).str.startswith("SUPERVISIÓN")].copy()
-    if sup.empty:
-        st.info("Todavía no hay jornadas registradas como supervisión (la opción llega con la versión nueva de la app).")
-    else:
-        sup["es_extra"] = sup["tipo_hora"].astype(str).str.contains("Extra")
-        sup["horario"] = sup["observaciones"].str.extract(r"SUPERVISIÓN (\d{2}:\d{2}-\d{2}:\d{2})")[0]
-        sup["motivo"] = sup["observaciones"].str.extract(r"Fuera del horario de la cuadrilla: (.*)$")[0]
-        dia = (sup.groupby(["nombre", "fecha"], as_index=False)
-               .agg(horario=("horario", "first"), horas=("horas", "sum"),
-                    extras=("horas", lambda s: s[sup.loc[s.index, "es_extra"]].sum()),
-                    costo=("costo_calculado", "sum"), motivo=("motivo", "first")))
-        res = (dia.groupby("nombre", as_index=False)
-               .agg(dias=("fecha", "nunique"), horas=("horas", "sum"), extras=("extras", "sum"), costo=("costo", "sum"),
-                    dias_fuera=("motivo", lambda s: s.notna().sum())))
-        st.dataframe(res.rename(columns={"nombre": "Maestro", "dias": "Días", "horas": "Horas", "extras": "Horas extra",
-                                         "costo": "Costo ($)", "dias_fuera": "Días con horas fuera de la cuadrilla"})
-                     .style.format({"Horas": "{:,.1f}", "Horas extra": "{:,.1f}", "Costo ($)": "${:,.0f}"}),
-                     width='stretch', hide_index=True)
-        st.markdown("**Detalle por día**")
-        st.dataframe(dia.sort_values(["fecha", "nombre"], ascending=[False, True])
-                     .rename(columns={"nombre": "Maestro", "fecha": "Fecha", "horario": "Horario", "horas": "Horas",
-                                      "extras": "Extra", "costo": "Costo ($)", "motivo": "Fuera del horario de la cuadrilla"})
-                     .style.format({"Horas": "{:,.1f}", "Extra": "{:,.1f}", "Costo ($)": "${:,.0f}", "Fecha": "{:%d/%m/%Y}"}),
-                     width='stretch', hide_index=True)
+        st.divider()
+        st.subheader("Jornada de supervisión de los maestros")
+        st.caption("Registros hechos con la opción 'Hoy solo supervisé' de la app. Su costo ya está repartido entre las actividades "
+                   "de la cuadrilla. Aquí se revisan horas, extras y lo que hicieron fuera del horario de la cuadrilla.")
+        sup = mo_f[mo_f["observaciones"].astype(str).str.startswith("SUPERVISIÓN")].copy()
+        if sup.empty:
+            st.info("Todavía no hay jornadas registradas como supervisión (la opción llega con la versión nueva de la app).")
+        else:
+            sup["es_extra"] = sup["tipo_hora"].astype(str).str.contains("Extra")
+            sup["horario"] = sup["observaciones"].str.extract(r"SUPERVISIÓN (\d{2}:\d{2}-\d{2}:\d{2})")[0]
+            sup["motivo"] = sup["observaciones"].str.extract(r"Fuera del horario de la cuadrilla: (.*)$")[0]
+            dia = (sup.groupby(["nombre", "fecha"], as_index=False)
+                   .agg(horario=("horario", "first"), horas=("horas", "sum"),
+                        extras=("horas", lambda s: s[sup.loc[s.index, "es_extra"]].sum()),
+                        costo=("costo_calculado", "sum"), motivo=("motivo", "first")))
+            res = (dia.groupby("nombre", as_index=False)
+                   .agg(dias=("fecha", "nunique"), horas=("horas", "sum"), extras=("extras", "sum"), costo=("costo", "sum"),
+                        dias_fuera=("motivo", lambda s: s.notna().sum())))
+            st.dataframe(res.rename(columns={"nombre": "Maestro", "dias": "Días", "horas": "Horas", "extras": "Horas extra",
+                                             "costo": "Costo ($)", "dias_fuera": "Días con horas fuera de la cuadrilla"})
+                         .style.format({"Horas": "{:,.1f}", "Horas extra": "{:,.1f}", "Costo ($)": "${:,.0f}"}),
+                         width='stretch', hide_index=True)
+            st.markdown("**Detalle por día**")
+            st.dataframe(dia.sort_values(["fecha", "nombre"], ascending=[False, True])
+                         .rename(columns={"nombre": "Maestro", "fecha": "Fecha", "horario": "Horario", "horas": "Horas",
+                                          "extras": "Extra", "costo": "Costo ($)", "motivo": "Fuera del horario de la cuadrilla"})
+                         .style.format({"Horas": "{:,.1f}", "Extra": "{:,.1f}", "Costo ($)": "${:,.0f}", "Fecha": "{:%d/%m/%Y}"}),
+                         width='stretch', hide_index=True)
 
 # ============ TAB CALIDAD DE DATOS ============
 if MOSTRAR_CALIDAD:
@@ -1173,74 +1203,75 @@ if MOSTRAR_CALIDAD:
     st.metric("Total de registros en vivo", len(mo))
 
 # ============ TAB CÓDIGOS POR PERSONA ============
-with tab5:
-    st.subheader("Códigos de actividad por persona")
-    st.caption(
-        "Selecciona una persona para ver el resumen de horas por frente y "
-        "actividad — listos para asignar en el programa de nómina. Respeta "
-        "los filtros de la barra lateral (frente, semana, fecha), así que "
-        "puedes acotar primero al periodo de nómina que necesites."
-    )
-
-    nombres_disp = sorted(mo_f["nombre"].dropna().unique())
-    if not nombres_disp:
-        st.info("No hay registros para los filtros seleccionados en la barra lateral.")
-    else:
-        persona_sel = st.selectbox("Persona", nombres_disp)
-        datos_persona = mo_f[mo_f["nombre"] == persona_sel]
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total horas", f"{datos_persona['horas'].sum():,.1f} h")
-        c2.metric("Frentes distintos", datos_persona["frente_corto"].nunique())
-        c3.metric("Actividades distintas", datos_persona["codact"].nunique())
-
-        # --- Horas extra / recargo por tipo de hora ---
-        horas_ordinaria = datos_persona.loc[
-            datos_persona["tipo_hora"] == "Ordinaria Diurna", "horas"
-        ].sum()
-        horas_extra_total = datos_persona["horas"].sum() - horas_ordinaria
-
-        c4, c5 = st.columns(2)
-        c4.metric("Horas extra / recargo", f"{horas_extra_total:,.1f} h")
-        pct_extra = (horas_extra_total / datos_persona["horas"].sum() * 100) if datos_persona["horas"].sum() else 0
-        c5.metric("% del total en recargo", f"{pct_extra:,.0f}%")
-
-        st.markdown("**Desglose por tipo de hora**")
-        resumen_tipo_hora = (
-            datos_persona
-            .groupby("tipo_hora", as_index=False)
-            .agg(horas=("horas", "sum"), costo=("costo_calculado", "sum"), registros=("id", "count"))
-            .sort_values("horas", ascending=False)
-            .rename(columns={
-                "tipo_hora": "Tipo de Hora", "horas": "Horas",
-                "costo": "Costo estimado", "registros": "N° registros",
-            })
+if not VISTA_GERENCIA:
+    with tab5:
+        st.subheader("Códigos de actividad por persona")
+        st.caption(
+            "Selecciona una persona para ver el resumen de horas por frente y "
+            "actividad — listos para asignar en el programa de nómina. Respeta "
+            "los filtros de la barra lateral (frente, semana, fecha), así que "
+            "puedes acotar primero al periodo de nómina que necesites."
         )
-        st.dataframe(
-            resumen_tipo_hora.style.format({"Costo estimado": "${:,.0f}"}),
-            width='stretch', hide_index=True,
-        )
-        if horas_extra_total > 0:
-            tipos_extra = sorted(
-                datos_persona.loc[datos_persona["tipo_hora"] != "Ordinaria Diurna", "tipo_hora"].unique()
+
+        nombres_disp = sorted(mo_f["nombre"].dropna().unique())
+        if not nombres_disp:
+            st.info("No hay registros para los filtros seleccionados en la barra lateral.")
+        else:
+            persona_sel = st.selectbox("Persona", nombres_disp)
+            datos_persona = mo_f[mo_f["nombre"] == persona_sel]
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total horas", f"{datos_persona['horas'].sum():,.1f} h")
+            c2.metric("Frentes distintos", datos_persona["frente_corto"].nunique())
+            c3.metric("Actividades distintas", datos_persona["codact"].nunique())
+
+            # --- Horas extra / recargo por tipo de hora ---
+            horas_ordinaria = datos_persona.loc[
+                datos_persona["tipo_hora"] == "Ordinaria Diurna", "horas"
+            ].sum()
+            horas_extra_total = datos_persona["horas"].sum() - horas_ordinaria
+
+            c4, c5 = st.columns(2)
+            c4.metric("Horas extra / recargo", f"{horas_extra_total:,.1f} h")
+            pct_extra = (horas_extra_total / datos_persona["horas"].sum() * 100) if datos_persona["horas"].sum() else 0
+            c5.metric("% del total en recargo", f"{pct_extra:,.0f}%")
+
+            st.markdown("**Desglose por tipo de hora**")
+            resumen_tipo_hora = (
+                datos_persona
+                .groupby("tipo_hora", as_index=False)
+                .agg(horas=("horas", "sum"), costo=("costo_calculado", "sum"), registros=("id", "count"))
+                .sort_values("horas", ascending=False)
+                .rename(columns={
+                    "tipo_hora": "Tipo de Hora", "horas": "Horas",
+                    "costo": "Costo estimado", "registros": "N° registros",
+                })
             )
-            st.caption("Tipos de recargo presentes: " + ", ".join(tipos_extra))
+            st.dataframe(
+                resumen_tipo_hora.style.format({"Costo estimado": "${:,.0f}"}),
+                width='stretch', hide_index=True,
+            )
+            if horas_extra_total > 0:
+                tipos_extra = sorted(
+                    datos_persona.loc[datos_persona["tipo_hora"] != "Ordinaria Diurna", "tipo_hora"].unique()
+                )
+                st.caption("Tipos de recargo presentes: " + ", ".join(tipos_extra))
 
-        resumen_persona = (
-            datos_persona
-            .groupby(["frente_corto", "frente", "codact", "actDesc"], as_index=False)
-            .agg(horas=("horas", "sum"), registros=("id", "count"))
-            .sort_values(["frente_corto", "codact"])
-            .rename(columns={
-                "frente_corto": "Frente", "frente": "Nombre completo del frente", "codact": "Cód. Actividad",
-                "actDesc": "Actividad", "horas": "Horas", "registros": "N° registros",
-            })
-        )
-        st.dataframe(resumen_persona, width='stretch', hide_index=True)
+            resumen_persona = (
+                datos_persona
+                .groupby(["frente_corto", "frente", "codact", "actDesc"], as_index=False)
+                .agg(horas=("horas", "sum"), registros=("id", "count"))
+                .sort_values(["frente_corto", "codact"])
+                .rename(columns={
+                    "frente_corto": "Frente", "frente": "Nombre completo del frente", "codact": "Cód. Actividad",
+                    "actDesc": "Actividad", "horas": "Horas", "registros": "N° registros",
+                })
+            )
+            st.dataframe(resumen_persona, width='stretch', hide_index=True)
 
-        st.download_button(
-            "⬇️ Descargar este resumen (CSV)",
-            resumen_persona.to_csv(index=False).encode("utf-8"),
-            file_name=f"codigos_{persona_sel.replace(' ', '_')}.csv",
-            mime="text/csv",
-        )
+            st.download_button(
+                "⬇️ Descargar este resumen (CSV)",
+                resumen_persona.to_csv(index=False).encode("utf-8"),
+                file_name=f"codigos_{persona_sel.replace(' ', '_')}.csv",
+                mime="text/csv",
+            )
