@@ -694,6 +694,60 @@ def mostrar_alertas(mo_base, tarifas):
         st.dataframe(marcar_plan(npw.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"}), 8, "Código", sg, ini).sort_values("Costo", ascending=False)
                      .style.format({"Horas": "{:,.1f}", "Costo": "$ {:,.0f}"}), hide_index=True, width='stretch')
 
+    # ---------- Informe semanal para enviar (lo administra control de costos) ----------
+    st.divider()
+    st.markdown("#### 📤 Informe semanal para gerencia")
+    rango = f"{ini:%d-%b} a {fin:%d-%b-%Y}"
+    def top(df, col_n, col_v, fmt, n=3):
+        if df.empty:
+            return "ninguna"
+        x = df.sort_values(col_v, ascending=False).head(n)
+        return "; ".join(f"{r[col_n]} ({fmt(r[col_v])})" for _, r in x.iterrows())
+    pesos = lambda v: f"$ {v:,.0f}".replace(",", ".")
+    texto = (
+        f"Asunto: Alertas de control de costos AIRPLAN T1 JMC — semana {rango}\n\n"
+        f"Buen día. Comparto las alertas de la semana {rango} (detalle en el dashboard, vista Gerencia > Alertas de la semana, y en el Excel adjunto):\n\n"
+        f"1. Horas extra: {len(he_alert)} personas superaron el 40 % proyectado; exceso de {pesos(he_alert['Exceso sobre lo proyectado ($)'].sum())}. "
+        f"Mayores: {top(he_alert, 'Nombre', '% HE', lambda v: f'{v:.0%}')}.\n"
+        f"2. Jornadas excesivas: {len(dia_ex)} días de más de {U.get('horas_dia_max', 12):.0f} h y {len(sem_ex)} personas con más de {U.get('horas_semana_max', 60):.0f} h en la semana.\n"
+        f"3. Administración (A) de maestros: real {pesos(a_real)} vs proyectado {pesos(a_proy)} ({(a_real / a_proy if a_proy else 0):.0%}).\n"
+        f"4. Oficiales y ayudantes proyectados en la A: {pesos(ofi['A sobrestimada'].sum())} de la A no se consumieron porque su trabajo fue al APU.\n"
+        f"5. Trabajo dentro del campamento (cargado a la A): {pesos(camp['Costo'].sum())}.\n"
+        f"6. Sobrecosto de mano de obra: {len(sobre)} actividades con 80 % o más de la MO proyectada consumida; {pesos(sobre['Exceso ($)'].sum())} por encima. "
+        f"Mayores: {top(sobre.reset_index(), 'codact', '% MO consumida', lambda v: f'{v:.0%}')}.\n"
+        f"7. Posible doble pago (MO propia en actividades con subcontrato): {pesos(doble['Costo_sem'].sum())} en {len(doble)} actividades.\n"
+        f"8. No presupuestadas: {pesos(npw['Costo'].sum())} en {npw['codact'].nunique()} códigos (candidatas a cobro como adicional).\n\n"
+        f"Planes de mejora: {int((sg['lunes'] == ini).sum()) if not sg.empty else 0} registrados para esta semana; "
+        f"{int(((sg['Estado'] != 'Cerrada') & sg['Fecha compromiso'].notna() & (sg['Fecha compromiso'] < hoy)).sum()) if not sg.empty else 0} vencidos.\n\n"
+        f"Quedo atento a los planes de cada frente en la pestaña Alertas_Seguimiento."
+    )
+    st.caption("Texto listo para pegar en el correo (revísalo y ajústalo antes de enviarlo):")
+    st.text_area("Texto del correo", texto, height=330, label_visibility="collapsed", key="texto_informe")
+    import io
+    buf = io.BytesIO()
+    hojas = {
+        "Horas extra": he_alert[["Nombre", "Cargo", "Frente principal", "Residente", "Días", "Horas", "Horas extra/recargo", "% HE", "Semáforo", "Exceso sobre lo proyectado ($)", "Plan de mejora"]],
+        "Jornadas >12h": dia_ex.rename(columns={"nombre": "Nombre", "fecha": "Fecha", "horas": "Horas"}),
+        "Semanas >60h": sem_ex.rename("Horas en la semana").reset_index().rename(columns={"nombre": "Nombre"}),
+        "A maestros": a_m.reset_index(drop=True)[["Nombre", "Proyectado", "Real", "Diferencia (real − proy.)", "Lectura"]],
+        "Of-ayud en A": ofi.reset_index(drop=True)[["Nombre", "Proyectado en A", "A (campamento)", "APU (actividades)", "A sobrestimada"]],
+        "Campamento": camp.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"}),
+        "Sobrecosto MO": sobre.reset_index().rename(columns={"codact": "Código", "Costo_sem": "Costo semana", "Costo_acum": "Costo acumulado"})[["Código", "Descripción", "Proy. mano de obra", "Costo acumulado", "% MO consumida", "Semáforo", "Exceso ($)", "Costo semana"]],
+        "Doble pago": doble.reset_index().rename(columns={"codact": "Código", "Costo_sem": "MO propia semana", "Horas_sem": "Horas semana"})[["Código", "Descripción", "Proy. subcontratos", "Horas semana", "MO propia semana"]],
+        "No presupuestadas": npw.rename(columns={"codact": "Código", "actDesc": "Actividad", "cod_fr": "Frente"}),
+        "Planes de mejora": sg[[c_ for c_ in COLS_SEG if c_ in sg.columns]] if not sg.empty else pd.DataFrame(columns=COLS_SEG),
+    }
+    with pd.ExcelWriter(buf, engine="openpyxl") as xw:
+        pd.DataFrame({"Informe": texto.split("\n")}).to_excel(xw, sheet_name="Resumen", index=False)
+        for nom, df_ in hojas.items():
+            df_.to_excel(xw, sheet_name=nom[:31], index=False)
+        for ws_ in xw.book.worksheets:
+            for col in ws_.columns:
+                ws_.column_dimensions[col[0].column_letter].width = min(60, max(10, max(len(str(c_.value or "")) for c_ in col[:50]) + 2))
+    st.download_button("⬇️ Descargar informe de la semana (Excel)", buf.getvalue(),
+                       file_name=f"Alertas_semana_{ini:%Y-%m-%d}.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_informe")
+
     # ---------- 9. Planes de mejora ----------
     st.divider()
     st.markdown("#### 📝 Planes de mejora")
