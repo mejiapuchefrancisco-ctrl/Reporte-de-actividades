@@ -964,6 +964,11 @@ def cargar_cortes():
             d[f"q{k}"] = _num(r[cc])
             d[f"v{k}"] = _num(r[cs])
         regs.append(d)
+    # códigos de la hoja de cortes que no coinciden con SINCO (misma descripción)
+    REMAP = {"05.11.06.13.14": "05.11.06.03.14", "05.11.16.03.13": "05.11.06.03.13", "07.09.00.05.01": "07.09.01.05.01",
+             "07.09.00.05.02": "07.09.01.05.02", "07.09.00.05.03": "07.09.01.05.03"}
+    for d in regs:
+        d["cod"] = REMAP.get(d["cod"], d["cod"])
     C = pd.DataFrame(regs).fillna({c: 0 for c in [f"v{k}" for k in cols] + [f"q{k}" for k in cols] + ["venta", "cant"]})
     # solo ítems sin hijos (las filas título con valor duplicarían)
     cods = set(C["cod"])
@@ -1284,10 +1289,392 @@ def mostrar_presupuesto(mo_base):
                 st.markdown(f"- {a}")
 
 
+# ============ MO OPERATIVA: NÓMINA REAL VS. PROYECCIÓN A Y APU (8-oct-2026) ============
+# Fuente principal: Google Sheet / Excel "BD_Nomina_MO" (pestaña Nomina_SINCO = nómina liquidada SINCO tal cual
+# sale, mes a mes; pestaña Ajustes_Cargo = personas cuyo cargo real difiere del de nómina).
+# Enlace en URL_BD_NOMINA (o, si se cambia de archivo, en Parametros_Alertas > Umbrales, parámetro url_bd_nomina).
+# Los meses que no están en la nómina se estiman con la app (horas × tarifa × factor).
+# Solo maestros, oficiales y ayudantes. Regla: maestros -> A; oficiales y ayudantes -> APU de la
+# actividad, salvo código GG o campamento -> A. Frentes 15, 16, 17 = guías.
+URL_BD_NOMINA = "https://drive.google.com/uc?export=download&id=1OB3w9yq_u8opkAgMEkRhaafjh1Tp2mvT"   # BD_Nomina_MO en Drive
+MES_CORTO = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun", 7: "Jul", 8: "Ago", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
+INICIO_OBRA = pd.Period("2026-04", freq="M")
+
+
+def _grupo_cargo(c):
+    c = str(c).lower()
+    if "maestro" in c:
+        return "Maestros"
+    if "oficial" in c:
+        return "Oficiales"
+    if "ayudante" in c and "sst" not in c:
+        return "Ayudantes"
+    if "sin confirmar" in c:
+        return "Ayudantes"
+    return None
+
+
+def _clave_persona(n):
+    """Mismo nombre aunque venga 'APELLIDOS NOMBRES' (SINCO) o 'NOMBRES APELLIDOS' (app)."""
+    return " ".join(sorted(re.sub(r"[^A-Z ]", "", normalizar_nombre(n)).split()))
+
+
+def _id_drive(url):
+    m = re.search(r"(?:/d/|id=)([\w-]{20,})", str(url))
+    return m.group(1) if m else None
+
+
+@st.cache_data(ttl=600, show_spinner="Leyendo la base de nómina...")
+def cargar_bd_nomina(url):
+    import io, urllib.request
+    fid = _id_drive(url)
+    if not fid:
+        raise ValueError("el enlace de url_bd_nomina no tiene el ID del archivo")
+    b = b""
+    for u in (f"https://docs.google.com/spreadsheets/d/{fid}/export?format=xlsx",   # si es Hoja de cálculo de Google
+              f"https://drive.google.com/uc?export=download&id={fid}"):           # si es un .xlsx subido a Drive
+        try:
+            with urllib.request.urlopen(u, timeout=120) as r:
+                b = r.read()
+        except Exception:
+            b = b""
+        if b[:2] == b"PK":
+            break
+    if b[:2] != b"PK":
+        raise ValueError("no se pudo descargar; revisa que esté compartida como 'Cualquier persona con el enlace'")
+    x = pd.read_excel(io.BytesIO(b), sheet_name=None, dtype=str)
+    n = x["Nomina_SINCO"]
+    aj = x.get("Ajustes_Cargo", pd.DataFrame(columns=["Nombre", "Grupo"]))
+    return n, aj
+
+
+def _base_operativa(mo_base, n, aj, U):
+    """Una fila por persona × mes × código con costo, grupo, destino e imputación."""
+    avisos = []
+    n = n.dropna(subset=["Cedula"]).copy()
+    for c in ["Valor", "Porcentaje", "Anio", "Mes"]:
+        n[c] = pd.to_numeric(n[c], errors="coerce")
+    malos = n[n[["Valor", "Porcentaje", "Anio", "Mes"]].isna().any(axis=1)]
+    if len(malos):
+        avisos.append(f"{len(malos)} filas de la nómina sin Valor, Porcentaje, Año o Mes válidos (no se tienen en cuenta).")
+    n = n.drop(malos.index)
+    n["mes"] = pd.PeriodIndex([pd.Period(year=int(a), month=int(m), freq="M") for a, m in zip(n["Anio"], n["Mes"])])
+    cod = n["No Item Ppto"].fillna("").astype(str).str.replace(r"\s+", "", regex=True)
+    raros = cod[(cod != "") & ~cod.str.match(r"^(\d\d(\.\d\d)+(GG)?|NP-.*|SUP-.*)$", case=False)]
+    if len(raros):
+        avisos.append(f"Códigos con formato extraño en la nómina (revisar en SINCO, o si se dañaron al pegar): {', '.join(sorted(raros.unique())[:8])}.")
+    NO = pd.DataFrame({"mes": n["mes"], "fuente": "Nómina SINCO", "nombre": n["Nombre Empleado"].astype(str).str.strip(),
+                       "cargo": n["Cargo"], "cod": cod, "costo": n["Valor"] * n["Porcentaje"], "desc": ""})
+    meses_nom = sorted(NO["mes"].unique())
+    dup = n.groupby("mes")["Nomina"].nunique()
+    for m_, k in dup[dup > 1].items():
+        avisos.append(f"{MES_CORTO[m_.month]}: hay {k} nóminas distintas pegadas (columna Nomina). Si una es provisional, bórrala.")
+
+    ap = mo_base.dropna(subset=["fecha"]).copy()
+    ap["mes"] = ap["fecha"].dt.to_period("M")
+    ult_nom = max(meses_nom) if meses_nom else INICIO_OBRA - 1
+    ap = ap[(ap["mes"] > ult_nom) & (ap["mes"] >= INICIO_OBRA)]
+    AP = pd.DataFrame({"mes": ap["mes"], "fuente": "App (estimado)", "nombre": ap["nombre"].astype(str), "cargo": ap["cargo"],
+                       "cod": ap["codact"].astype(str).str.strip(), "costo": ap["costo_calculado"],
+                       "desc": ap["actDesc"].fillna("").astype(str) if "actDesc" in ap.columns else ""})
+    if ap["costo_calculado"].isna().any():
+        avisos.append(f"{ap.loc[ap['costo_calculado'].isna(), 'nombre'].nunique()} personas de la app sin tarifa: su costo no se cuenta en los meses estimados.")
+    R = pd.concat([NO, AP], ignore_index=True)
+    R["clave"] = R["nombre"].map(_clave_persona)
+    R["grupo"] = R["cargo"].map(_grupo_cargo)
+    if len(aj) and {"Nombre", "Grupo"}.issubset(aj.columns):
+        mapa = {_clave_persona(a): str(g).strip() for a, g in zip(aj["Nombre"], aj["Grupo"]) if isinstance(a, str) and isinstance(g, str)}
+        R["grupo"] = R["clave"].map(mapa).fillna(R["grupo"])
+    R = R[R["grupo"].isin(["Maestros", "Oficiales", "Ayudantes"])].copy()
+
+    cu = R["cod"].str.upper()
+    R["fr"] = R["cod"].str.extract(r"^(\d\d)\.")[0].fillna(R["cod"].str.extract(r"^(?:NP|SUP)-(\d\d)", flags=re.I)[0])
+    desc = R["desc"].str.upper()
+    camp = (desc.str.contains(str(U.get("palabras_campamento", "CAMPAMENT")), regex=True)
+            & ~desc.str.contains(str(U.get("palabras_no_campamento", "TRASLAD|RETIR|DESMONT|TRASIEG|ACARRE")), regex=True))
+    R["destino"] = np.select(
+        [R["cod"] == "", cu.str.endswith("GG"), R["fr"].isin(FRENTES_GUIAS), cu.str.startswith("SUP"), camp],
+        ["Sin código", "Código GG", "Guías (15, 16, 17)", "Supervisión", "Campamento"], "Ítem de obra")
+    R["imputa"] = np.where(R["grupo"] == "Maestros", "A",
+                  np.where(R["destino"].isin(["Código GG", "Campamento", "Supervisión"]), "A",
+                  np.where(R["destino"] == "Guías (15, 16, 17)", "Guías",
+                  np.where(R["destino"] == "Sin código", "Sin código", "APU"))))
+    sin = R[(R["destino"] == "Sin código")]
+    if len(sin):
+        avisos.append("Sin código de ítem: " + ", ".join(f"{r.nombre} ({MES_CORTO[r.mes.month]}, $ {r.costo/1e6:,.1f} M)"
+                                                         for r in sin.groupby(["nombre", "mes"]).costo.sum().reset_index().itertuples()) + ".")
+    return R, meses_nom, avisos
+
+
+def _proyeccion_a(pa, meses, hasta=None):
+    """Proyección mensual prorrateada por días activos; el mes en curso solo hasta el último día con datos."""
+    p = pa[(pa["¿Proyectado en A?"].astype(str).str.strip() == "Sí") & (pa["Sección"].astype(str).str.strip() == "PERSONAL ADMINISTRATIVO")].copy()
+    p["g"] = np.where(p["Cargo en la proyección"].astype(str).str.upper().str.contains("MAESTRO"), "Maestros", "Oficiales y ayudantes")
+    p["clave"] = p["Nombre en la app (Maestro de Personal)"].apply(lambda x: _clave_persona(x) if isinstance(x, str) and x.strip() else None)
+    p["mensual"] = pd.to_numeric(p["Salario total mes proyectado (con HE)"], errors="coerce").fillna(0)
+    filas = []
+    for r in p.itertuples():
+        if pd.isna(r.Inicio) or pd.isna(r.Fin):
+            continue
+        for m in meses:
+            a, b = m.start_time.normalize(), m.end_time.normalize()
+            fin = min(b, r.Fin, hasta) if hasta is not None else min(b, r.Fin)
+            dias = (fin - max(a, r.Inicio)).days + 1
+            if dias > 0:
+                filas.append({"mes": m, "g": r.g, "clave": r.clave, "proy": r.mensual * dias / b.day})
+    return pd.DataFrame(filas, columns=["mes", "g", "clave", "proy"])
+
+
+def mostrar_mo_operativa(mo_base):
+    pa, mop, U, rs = cargar_parametros()
+    url = U.get("url_bd_nomina", "") or URL_BD_NOMINA   # el parámetro de Umbrales, si existe, manda
+    if not isinstance(url, str) or not _id_drive(url):
+        st.info("Falta el enlace de la base de nómina. En **Parametros_Alertas → pestaña Umbrales** agrega una fila con "
+                "Parámetro = `url_bd_nomina` y en Valor pega el enlace del archivo BD_Nomina_MO.")
+        return
+    try:
+        n, aj = cargar_bd_nomina(url)
+    except Exception as e:
+        st.error(f"No se pudo leer la base de nómina ({e}).")
+        return
+    R, meses_nom, avisos = _base_operativa(mo_base, n, aj, U)
+    if R.empty:
+        st.warning("La base de nómina no tiene filas de maestros, oficiales o ayudantes.")
+        return
+    RES = dict(zip(rs["Cód. frente"], rs["Residente(s)"].fillna("—")))
+    meses = sorted(R["mes"].unique())
+    lab = {m: MES_CORTO[m.month] for m in meses}
+    fuente_mes = R.groupby("mes")["fuente"].first()
+    est = [lab[m] for m in meses if fuente_mes[m] != "Nómina SINCO"]
+    A_AM, A_RO = float(U.get("a_amarillo", 0.9)), float(U.get("a_rojo", 1.0))
+    MO_AM, MO_RO = float(U.get("mo_amarillo", 0.8)), float(U.get("mo_rojo", 1.0))
+
+    st.subheader("Mano de obra operativa: nómina real contra la A y el APU")
+    st.caption(f"Maestros, oficiales y ayudantes de {lab[meses[0]]} a {lab[meses[-1]]}. "
+               + (f"Nómina liquidada SINCO: {', '.join(lab[m] for m in meses_nom if m in lab)}. " if meses_nom else "")
+               + (f"**Estimado con la app** (horas × tarifa): {', '.join(est)}. " if est else "")
+               + (f"El mes en curso va hasta el {_f(mo_base['fecha'].max())} (la proyección de la A también). " if est else "")
+               + "Regla: maestros → A; oficiales y ayudantes → APU de la actividad, salvo código GG o campamento → A.")
+
+    # ---- A real vs. proyectada
+    ult_dato = mo_base["fecha"].max() if est else None
+    PR = _proyeccion_a(pa, meses, ult_dato)
+    g_proy = PR.dropna(subset=["clave"]).groupby("clave")["g"].first()
+    R["gA"] = R["clave"].map(g_proy).fillna(pd.Series(np.where(R["grupo"] == "Maestros", "Maestros", "Oficiales y ayudantes"), index=R.index))
+    RA = R[R["imputa"] == "A"]
+    SA = pd.DataFrame({"real": RA.groupby(["gA", "mes"])["costo"].sum(), "proy": PR.groupby(["g", "mes"])["proy"].sum().rename_axis(["gA", "mes"])}).fillna(0)
+    tot = SA.groupby(level=0).sum()
+    ma = tot.loc["Maestros"] if "Maestros" in tot.index else pd.Series({"real": 0, "proy": 0})
+    oa = tot.loc["Oficiales y ayudantes"] if "Oficiales y ayudantes" in tot.index else pd.Series({"real": 0, "proy": 0})
+
+    # ---- APU: lo que paga por lo facturado en cada mes (mes M = corte del 24-M + corte del 3-(M+1))
+    try:
+        C, cortes, _ = cargar_cortes()
+    except Exception as e:
+        st.error(f"No se pudo leer el archivo de cortes ({e}).")
+        return
+    FEC = _fechas_cortes()
+    M = mop.rename(columns={"Código": "cod", "Proy. mano de obra": "pMO", "Frente": "frS", "Descripción": "descS"})[["cod", "pMO", "frS", "descS"]].copy()
+    M["pMO"] = pd.to_numeric(M["pMO"], errors="coerce").fillna(0).clip(lower=0)
+    M["frS"] = M["frS"].astype(str).str.strip().str.zfill(2)
+    M = M.groupby("cod").agg(pMO=("pMO", "sum"), frS=("frS", "first"), descS=("descS", "first")).reset_index()
+    # ítems de SINCO que no están en la hoja de cortes (p. ej. no presupuestadas del cap. 19) también entran, con venta 0
+    I = C.merge(M, on="cod", how="outer").fillna({"pMO": 0, "venta": 0})
+    for k in cortes:
+        I[f"v{k}"] = I[f"v{k}"].fillna(0)
+    I["desc"] = I["desc"].fillna(I["descS"])
+    I["fr"] = I["frS"].fillna(I["cod"].str[:2])
+    con_valor = [k for k in cortes if I[f"v{k}"].abs().sum() > 0]
+    sin_fecha = [k for k in con_valor if k not in FEC]
+    if sin_fecha:
+        avisos.append(f"Cortes sin fecha en Parametros_Alertas → Cortes: {', '.join(map(str, sin_fecha))} (no se reparten por mes).")
+    for m in meses:
+        ks = [k for k in con_valor if k in FEC and (FEC[k] - pd.Timedelta(days=6)).to_period("M") == m]
+        I[f"G_{m}"] = (np.where(I["venta"] > 0, I[[f"v{k}" for k in ks]].sum(axis=1) / I["venta"], 0) * I["pMO"]) if ks else 0.0
+    I["facturado"] = I[[f"v{k}" for k in con_valor]].sum(axis=1) if con_valor else 0.0
+    I["paga_fact"] = np.where(I["venta"] > 0, I["facturado"] / I["venta"], 0) * I["pMO"]
+
+    O = R[R["imputa"] == "APU"]
+    mo_cod = O.pivot_table(index="cod", columns="mes", values="costo", aggfunc="sum").fillna(0)
+    T = I.set_index("cod")[["fr", "desc", "venta", "facturado", "pMO", "paga_fact"] + [f"G_{m}" for m in meses]].join(mo_cod, how="outer")
+    for c in ["venta", "facturado", "pMO", "paga_fact"] + [f"G_{m}" for m in meses] + list(mo_cod.columns):
+        T[c] = T[c].fillna(0)
+    idx = pd.Series(T.index, index=T.index)
+    T["fr"] = T["fr"].fillna(idx.str.extract(r"^(\d\d)\.")[0]).fillna(idx.str.extract(r"^(?:NP|SUP)-(\d\d)", flags=re.I)[0])
+    T["MO"] = T[list(mo_cod.columns)].sum(axis=1) if len(mo_cod.columns) else 0.0
+    otros = T[~T["fr"].isin(NOMBRE_FRENTE) & (T["MO"] > 0)]          # transversales (TODOS) o frentes fuera de la lista
+    T = T[T["fr"].isin(NOMBRE_FRENTE) & ~T["fr"].isin(FRENTES_GUIAS)]
+    obra_mo = T["MO"].sum()
+    obra_paga = T["paga_fact"].sum()
+    sin_apu = T[(T["MO"] > 0) & (T["pMO"] <= 0)]
+
+    # ---- KPIs
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("MO operativa acumulada", f"$ {R['costo'].sum()/1e6:,.1f} M")
+    k1.caption(f"A $ {RA['costo'].sum()/1e6:,.1f} M · APU $ {O['costo'].sum()/1e6:,.1f} M · guías $ {R.loc[R.imputa=='Guías','costo'].sum()/1e6:,.1f} M")
+    r_m = ma["real"] / ma["proy"] if ma["proy"] else np.nan
+    k2.metric("Maestros: A real ÷ proyectada", f"{r_m:.0%}" if pd.notna(r_m) else "—")
+    k2.caption(f"$ {ma['real']/1e6:,.1f} M de $ {ma['proy']/1e6:,.1f} M proyectados")
+    r_o = oa["real"] / oa["proy"] if oa["proy"] else np.nan
+    k3.metric("Oficiales y ayudantes: A real ÷ proyectada", f"{r_o:.0%}" if pd.notna(r_o) else "—")
+    k3.caption(f"$ {oa['real']/1e6:,.1f} M de $ {oa['proy']/1e6:,.1f} M · el resto de su costo está en los APU")
+    r_apu = obra_mo / obra_paga if obra_paga else np.nan
+    k4.metric("Oficiales y ayudantes en obra ÷ lo que paga el APU", f"{r_apu:.0%}" if pd.notna(r_apu) else "—")
+    k4.caption(f"$ {obra_mo/1e6:,.1f} M contra $ {obra_paga/1e6:,.1f} M por lo facturado · $ {sin_apu['MO'].sum()/1e6:,.1f} M en APU sin MO propia")
+
+    # ---- mes a mes
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Administración (A): real contra proyectada**")
+        gA = SA.reset_index()
+        gA["Mes"] = gA["mes"].map(lab)
+        gA = gA.melt(id_vars=["gA", "Mes", "mes"], value_vars=["proy", "real"], var_name="serie", value_name="v")
+        gA["serie"] = gA["serie"].map({"proy": "Proyectada", "real": "Real"}) + " · " + gA["gA"].map({"Maestros": "maestros", "Oficiales y ayudantes": "of. y ay."})
+        gA["v"] = gA["v"] / 1e6
+        fig = px.bar(gA.sort_values("mes"), x="Mes", y="v", color="serie", barmode="group",
+                     labels={"v": "Millones de pesos", "Mes": "", "serie": ""},
+                     color_discrete_map={"Proyectada · maestros": "#A7C4B0", "Real · maestros": "#1A5632",
+                                         "Proyectada · of. y ay.": "#E9D9A6", "Real · of. y ay.": "#B8860B"})
+        fig.update_layout(height=340, legend=dict(orientation="h", y=1.15), margin=dict(l=10, r=10, t=40, b=10))
+        st.plotly_chart(fig, width='stretch')
+    with c2:
+        st.markdown("**Oficiales y ayudantes en obra contra lo que paga el APU en el mes**")
+        gm = pd.DataFrame({"Mes": [lab[m] for m in meses],
+                           "MO real en ítems": [T[m].sum() / 1e6 if m in T.columns else 0 for m in meses],
+                           "APU paga por lo facturado": [T[f"G_{m}"].sum() / 1e6 for m in meses]})
+        fig = px.bar(gm.melt(id_vars="Mes", var_name="serie", value_name="v"), x="Mes", y="v", color="serie", barmode="group",
+                     labels={"v": "Millones de pesos", "Mes": "", "serie": ""},
+                     color_discrete_map={"MO real en ítems": "#1F3A5F", "APU paga por lo facturado": "#D97706"})
+        fig.update_layout(height=340, legend=dict(orientation="h", y=1.15), margin=dict(l=10, r=10, t=40, b=10))
+        st.plotly_chart(fig, width='stretch')
+    st.caption("Lo facturado se asigna al mes así: corte del 24 del mes + corte del 3 del mes siguiente. "
+               + (f"Meses estimados con la app ({', '.join(est)}): la app queda en promedio ~8 % por debajo de la nómina." if est else ""))
+
+    # ---- por frente
+    st.markdown("#### Oficiales y ayudantes por frente")
+    P = cargar_programacion()
+    top = P[P["wbs"] == "0"].set_index("semana").sort_index()
+    con_ev = top[(top["EV"] > 0) & (top.index <= pd.Timestamp.today().normalize())]
+    ev_fr = (P[(P["nivel"] == 1) & P["fr"].notna() & (P["semana"] == con_ev.index.max())].groupby("fr")["EV"].sum()
+             if not con_ev.empty else pd.Series(dtype=float))
+    F = T.groupby("fr").agg(MO=("MO", "sum"), pMO=("pMO", "sum"), venta=("venta", "sum"), gan=("paga_fact", "sum"))
+    F["sin_apu"] = sin_apu.groupby("fr")["MO"].sum().reindex(F.index).fillna(0)
+    F["gan_ev"] = np.where(F["venta"] > 0, ev_fr.reindex(F.index).fillna(0) / F["venta"] * F["pMO"], 0)
+    F = F[F.index.isin(NOMBRE_FRENTE) & (F["MO"] > 0)].sort_values("MO", ascending=False)
+
+    def lectura(r):
+        if r.MO < 1e6:
+            return "⚪ Monto menor"
+        if r.pMO <= 0:
+            return "🔴 Personal propio en frente sin MO en el APU"
+        u = r.MO / max(r.gan, r.gan_ev) if max(r.gan, r.gan_ev) > 0 else np.inf
+        if u >= MO_RO:
+            return "🔴 Ya pasó lo que paga el APU"
+        if u >= MO_AM:
+            return "🟠 Cerca del límite"
+        return "🟢 Dentro de lo que paga el APU"
+
+    def decision(r):
+        if r.MO < 1e6:
+            return ""
+        d = []
+        if r.sin_apu > 0.3 * r.MO:
+            d.append("aclarar por qué hay personal propio en actividades subcontratadas o no presupuestadas")
+        if r.gan > 0 and r.MO > r.gan:
+            d.append("cobrar lo ejecutado en el próximo corte o revisar rendimiento")
+        return "; ".join(d).capitalize() if d else ""
+
+    TF = pd.DataFrame({
+        "Frente": [NOMBRE_FRENTE[i] for i in F.index], "Residente": [RES.get(i, "—") for i in F.index],
+        "MO real ($ M)": F["MO"].values / 1e6, "…en APU sin MO propia ($ M)": F["sin_apu"].values / 1e6,
+        "APU paga por lo facturado ($ M)": F["gan"].values / 1e6, "APU paga por lo ejecutado ($ M)": F["gan_ev"].values / 1e6,
+        "Estado": F.apply(lectura, axis=1).values, "Decisión": F.apply(decision, axis=1).values})
+    st.dataframe(TF.style.format({c: "{:,.1f}" for c in TF.columns if "($ M)" in c}), hide_index=True, width='stretch')
+    if len(otros):
+        st.caption("Además, ítems transversales o sin frente (no entran en la tabla ni en las alertas): "
+                   + " · ".join(f"{c} {str(r.desc)[:45]}: MO real $ {r.MO/1e6:,.1f} M contra $ {r.pMO/1e6:,.1f} M de MO proyectada"
+                                for c, r in otros.sort_values("MO", ascending=False).head(4).iterrows()) + ".")
+    st.caption(f"Acumulado {lab[meses[0]]}–{lab[meses[-1]]}. Lo facturado = cortes; lo ejecutado = programación al {_f(con_ev.index.max()) if not con_ev.empty else '—'}. "
+               f"El estado compara con la mayor de las dos medidas (🟠 desde {MO_AM:.0%}, 🔴 desde {MO_RO:.0%}).")
+
+    # ---- alertas con decisión
+    st.markdown("#### 🚨 Alertas para decidir")
+    T["Frente"] = T["fr"].map(NOMBRE_FRENTE).fillna(T["fr"])
+    T["Residente"] = T["fr"].map(RES).fillna("—")
+    T["Actividad"] = T["desc"].fillna("").astype(str).str.slice(0, 80)
+    supera = T[(T["MO"] > 0) & (T["pMO"] > 0) & (T["MO"] > T["pMO"])].copy()
+    supera["Exceso"] = supera["MO"] - supera["pMO"]
+    sobre_fact = T[(T["MO"] > 0) & (T["pMO"] > 0) & (T["MO"] <= T["pMO"]) & (T["facturado"] > 0) & (T["MO"] > T["paga_fact"])].copy()
+    sobre_fact["Exceso"] = sobre_fact["MO"] - sobre_fact["paga_fact"]
+    sa = sin_apu.copy()
+    sa["Tipo"] = np.select([sa.index.str.upper().str.startswith("NP"), sa["venta"] > 0], ["No presupuestada", "Subcontratada en el APU"], "Sin venta en el contrato")
+    PER = R[R["imputa"] == "A"].groupby(["clave", "gA"]).agg(Nombre=("nombre", "last"), real=("costo", "sum")).reset_index()
+    PER = PER.merge(PR.dropna(subset=["clave"]).groupby("clave")["proy"].sum().reset_index(), on="clave", how="outer").fillna({"real": 0, "proy": 0})
+    PER["Nombre"] = PER["Nombre"].fillna(PER["clave"])
+    no_proy = PER[(PER["proy"] <= 0) & (PER["real"] > 1e6)]
+    vac = PR[PR["clave"].isna()].groupby("g")["proy"].sum()
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🔴 Ítems que ya superan la MO de todo su APU", f"$ {supera['Exceso'].sum()/1e6:,.1f} M")
+    m1.caption(f"{len(supera)} ítems · exceso sin forma de cobrarse")
+    m2.metric("🟠 MO en APU sin MO propia", f"$ {sa['MO'].sum()/1e6:,.1f} M")
+    m2.caption(f"{len(sa)} ítems · {sa['MO'].sum()/obra_mo:.0%} de lo cargado a obra" if obra_mo else "")
+    m3.metric("🟠 MO por encima de lo facturado", f"$ {sobre_fact['Exceso'].sum()/1e6:,.1f} M")
+    m3.caption(f"{len(sobre_fact)} ítems · cobrar en el próximo corte o revisar")
+    m4.metric("🟡 A de personas no proyectadas", f"$ {no_proy['real'].sum()/1e6:,.1f} M")
+    m4.caption(f"{len(no_proy)} personas · vacantes proyectadas sin llenar $ {vac.sum()/1e6:,.1f} M")
+
+    fmt = {c: "{:,.0f}" for c in ["MO real", "MO del APU (total)", "APU paga por lo facturado", "Exceso", "Proyectado", "Real A", "Diferencia"]}
+    with st.expander(f"🔴 1. Ítems que ya gastaron más MO que la de TODO su APU ({len(supera)})", expanded=len(supera) > 0):
+        st.markdown("**Decisión:** aunque se facture el 100 %, este exceso no se recupera. Revisar con el residente si es **código mal asignado** "
+                    "(corregir en la nómina), **mayor cantidad** (tramitar adicional) o **bajo rendimiento** (plan de mejora).")
+        t = supera.sort_values("Exceso", ascending=False).reset_index().rename(columns={"index": "Código", "cod": "Código"})
+        st.dataframe(t[["Frente", "Residente", "Código", "Actividad", "MO", "pMO", "Exceso"]]
+                     .rename(columns={"MO": "MO real", "pMO": "MO del APU (total)"}).style.format(fmt), hide_index=True, width='stretch')
+    with st.expander(f"🟠 2. Personal propio en actividades cuyo APU no trae MO propia ({len(sa)})"):
+        st.markdown("**Decisión según el tipo:** *Subcontratada* → ¿por qué trabaja personal propio? descontar al subcontratista o justificar. "
+                    "*No presupuestada* → tramitar como adicional para poder cobrarla.")
+        t = sa.sort_values("MO", ascending=False).reset_index().rename(columns={"index": "Código", "cod": "Código"})
+        t["Frente"] = t["fr"].map(NOMBRE_FRENTE).fillna(t["fr"])
+        t["Residente"] = t["fr"].map(RES).fillna("—")
+        t["Actividad"] = t["desc"].fillna("").astype(str).str.slice(0, 80)
+        st.dataframe(t[["Frente", "Residente", "Tipo", "Código", "Actividad", "MO"]].rename(columns={"MO": "MO real"}).style.format(fmt),
+                     hide_index=True, width='stretch')
+    with st.expander(f"🟠 3. MO por encima de lo que paga el APU por lo facturado ({len(sobre_fact)})"):
+        st.markdown("**Decisión:** si la cantidad ejecutada es mayor que la facturada → **cobrarla en el próximo corte**. Si no → revisar rendimiento.")
+        t = sobre_fact.sort_values("Exceso", ascending=False).reset_index().rename(columns={"index": "Código", "cod": "Código"})
+        st.dataframe(t[["Frente", "Residente", "Código", "Actividad", "MO", "paga_fact", "Exceso"]]
+                     .rename(columns={"MO": "MO real", "paga_fact": "APU paga por lo facturado"}).style.format(fmt), hide_index=True, width='stretch')
+    with st.expander("🟡 4. Administración (A) por persona: real contra proyección"):
+        st.markdown("**Decisión:** personas **no proyectadas** con costo en la A → incluirlas en la proyección o reasignar su costo. "
+                    "Oficiales y ayudantes proyectados en la A cuyo costo quedó en actividades → **ajustar la proyección** para no contarlos dos veces.")
+        t = PER.assign(Diferencia=PER["real"] - PER["proy"]).sort_values(["gA", "Diferencia"])
+        st.dataframe(t[["gA", "Nombre", "proy", "real", "Diferencia"]].rename(columns={"gA": "Grupo", "proy": "Proyectado", "real": "Real A"})
+                     .style.format(fmt), hide_index=True, width='stretch')
+        if len(vac):
+            st.caption("Vacantes proyectadas sin persona: " + " · ".join(f"{g} $ {v/1e6:,.1f} M" for g, v in vac.items()))
+
+    import io as _io
+    buf = _io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as xw:
+        TF.to_excel(xw, sheet_name="Por frente", index=False)
+        supera.reset_index().rename(columns=str).to_excel(xw, sheet_name="Supera todo el APU", index=False)
+        sa.reset_index().rename(columns=str).to_excel(xw, sheet_name="APU sin MO propia", index=False)
+        sobre_fact.reset_index().rename(columns=str).to_excel(xw, sheet_name="Sobre lo facturado", index=False)
+        PER.to_excel(xw, sheet_name="A por persona", index=False)
+        R.assign(mes=R["mes"].astype(str)).drop(columns=["clave"]).to_excel(xw, sheet_name="Detalle", index=False)
+    st.download_button("📥 Descargar el detalle (Excel)", buf.getvalue(), file_name="MO_operativa_nomina.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    if avisos:
+        with st.expander(f"⚠️ Datos para revisar en la nómina ({len(avisos)})"):
+            for a in avisos:
+                st.markdown(f"- {a}")
+
+
 # Vistas (7-oct-2026): GERENCIA = Resumen general + Alertas de la semana + Presupuesto vs. ejecutado.
 # CONTROL INTERNO (control de costos y residentes) = Cobertura, Códigos por persona, Productividad, Cargo vs. tarea.
 if VISTA_GERENCIA:
-    tab0, tabA, tabP = st.tabs(["📋 Resumen general", "🚨 Alertas de la semana", "💰 Presupuesto vs. ejecutado"])
+    tab0, tabA, tabP, tabN = st.tabs(["📋 Resumen general", "🚨 Alertas de la semana", "💰 Presupuesto vs. ejecutado", "👷 MO operativa (nómina)"])
 else:
     tab8, tab5, tab3, tab7 = st.tabs(["✅ Cobertura de registro", "🔎 Códigos por Persona", "📈 Productividad", "⚠️ Cargo vs. tarea"])
 
@@ -1296,6 +1683,8 @@ if VISTA_GERENCIA:
         mostrar_alertas(mo[mo["frente"].isin(frente_sel)] if frente_sel else mo, tarifas)
     with tabP:
         mostrar_presupuesto(mo)
+    with tabN:
+        mostrar_mo_operativa(mo)
 
 # ============ TAB RESUMEN EJECUTIVO SEMANAL ============
 if VISTA_GERENCIA:
