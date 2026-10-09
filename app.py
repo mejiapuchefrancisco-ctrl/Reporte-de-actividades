@@ -1425,6 +1425,135 @@ def _proyeccion_a(pa, meses, hasta=None):
     return pd.DataFrame(filas, columns=["mes", "g", "clave", "proy"])
 
 
+FESTIVOS_CO = pd.to_datetime([  # festivos de Colombia (ley Emiliani) 2026-2027
+    "2026-01-01", "2026-01-12", "2026-03-23", "2026-04-02", "2026-04-03", "2026-05-01", "2026-05-18", "2026-06-08",
+    "2026-06-15", "2026-06-29", "2026-07-20", "2026-08-07", "2026-08-17", "2026-10-12", "2026-11-02", "2026-11-16",
+    "2026-12-08", "2026-12-25", "2027-01-01", "2027-01-11", "2027-03-22", "2027-03-25", "2027-03-26", "2027-05-01",
+    "2027-05-10", "2027-05-31", "2027-06-07", "2027-07-05", "2027-07-20", "2027-08-07", "2027-08-16", "2027-10-18",
+    "2027-11-01", "2027-11-15", "2027-12-08", "2027-12-25"])
+
+
+def _fr_app(df):
+    """Frente de cada registro de la app: código de ítem, NP-/SUP-xx o, si no, el frente elegido en la app."""
+    cod = df["codact"].astype(str).str.strip()
+    fr_cod = cod.where(cod.str.match(r"^\d\d\.")).str[:2]
+    np_sup = cod.str.extract(r"^(?:NP|SUP)-(\d\d)", flags=re.I)[0]
+    fr_app = pd.to_numeric(df.get("codfrente"), errors="coerce").astype("Int64").astype(str).str.zfill(2)
+    return fr_cod.fillna(np_sup).fillna(fr_app.where(fr_app != "<NA>"))
+
+
+def _historico_semanal(R, mo_base, aj, P, U_):
+    """Costo semanal (lunes a sábado) por frente desde abril.
+    - Desde el primer día con registros en la app: la app tal cual (no se toca).
+    - Antes: nómina SINCO del mes repartida por días hábiles lun-sáb sin festivos.
+      Frente: el del código de ítem; los códigos GG (cargos de gastos generales, no dicen frente) se reparten
+      (1) según los ítems de esa misma persona en ese mes, (2) según dónde trabajó en la app, solo en frentes
+      con avance ese mes en la programación, o (3) quedan 'Sin frente'."""
+    # ---- app: solo maestros, oficiales y ayudantes
+    ap = mo_base.dropna(subset=["fecha"]).copy()
+    ap["clave"] = ap["nombre"].map(_clave_persona)
+    ap["grupo"] = ap["cargo"].map(_grupo_cargo)
+    if len(aj) and {"Nombre", "Grupo"}.issubset(aj.columns):
+        mapa = {_clave_persona(a): str(g).strip() for a, g in zip(aj["Nombre"], aj["Grupo"]) if isinstance(a, str) and isinstance(g, str)}
+        ap["grupo"] = ap["clave"].map(mapa).fillna(ap["grupo"])
+    ap = ap[ap["grupo"].isin(["Maestros", "Oficiales", "Ayudantes"]) & ap["costo_calculado"].notna()].copy()
+    ap["fr"] = _fr_app(ap).fillna("SF")
+    # la app se usa desde que el registro quedó completo (17-ago); los registros sueltos anteriores no se suman
+    # porque esos días ya los cubre la nómina. Se puede cambiar en Umbrales con el parámetro inicio_app (AAAA-MM-DD).
+    ini_app = pd.to_datetime(str(U_.get("inicio_app", "2026-08-17"))[:10], errors="coerce")
+    if pd.isna(ini_app):
+        ini_app = pd.Timestamp("2026-08-17")
+    ap = ap[ap["fecha"] >= ini_app]
+    reparto_app = ap.groupby(["clave", "fr"])["costo_calculado"].sum()
+
+    # ---- frentes con avance a cada fin de mes (programación)
+    L1 = P[(P["nivel"] == 1) & P["fr"].notna()]
+    def activos(m):
+        """Frentes con avance DENTRO del mes: ejecutado acumulado al cierre del mes > al cierre del mes anterior."""
+        fin = L1[L1["semana"] <= m.end_time].groupby("fr")["EV"].max()
+        ini = L1[L1["semana"] <= (m - 1).end_time].groupby("fr")["EV"].max().reindex(fin.index).fillna(0)
+        return set(fin[(fin.fillna(0) - ini) > 0].index)
+
+    # ---- nómina: asignar frente
+    N = R[R["fuente"] == "Nómina SINCO"].copy()
+    directo = N[(N["destino"] != "Código GG") & N["fr"].notna()]
+    filas = [(r.mes, r.fr, "Nómina · código del ítem", r.costo) for r in directo.itertuples()]
+    propio = directo.groupby(["clave", "mes", "fr"])["costo"].sum()
+    for r in N.drop(directo.index).itertuples():
+        w, origen = None, None
+        if (r.clave, r.mes) in propio.index.droplevel(2):
+            w, origen = propio.loc[(r.clave, r.mes)], "Nómina · repartido (ítems de la persona en el mes)"
+        elif r.clave in reparto_app.index.get_level_values(0):
+            w = reparto_app.loc[r.clave]
+            act = activos(r.mes)
+            w2 = w[w.index.isin(act)]
+            w, origen = (w2 if w2.sum() > 0 else w), "Nómina · repartido (frentes de la persona en la app)"
+        if w is None or w.sum() <= 0:
+            filas.append((r.mes, "SF", "Nómina · sin frente", r.costo))
+        else:
+            for fr_, v in (w / w.sum()).items():
+                filas.append((r.mes, fr_, origen, r.costo * v))
+    NM = pd.DataFrame(filas, columns=["mes", "fr", "origen", "costo"])
+
+    # ---- nómina mensual -> semanas, solo días antes del inicio de la app
+    out = []
+    for m, d in NM.groupby("mes"):
+        dias = pd.date_range(m.start_time, m.end_time.normalize())
+        dias = dias[(dias.dayofweek < 6) & ~dias.isin(FESTIVOS_CO)]
+        if len(dias) == 0:
+            continue
+        usa = dias[dias < ini_app]
+        if len(usa) == 0:
+            continue
+        lun = pd.Series(usa - pd.to_timedelta(usa.dayofweek, unit="D")).value_counts() / len(dias)
+        for r in d.groupby(["fr", "origen"])["costo"].sum().reset_index().itertuples():
+            for l, w in lun.items():
+                out.append((l, r.fr, r.origen, r.costo * w))
+    H = pd.DataFrame(out, columns=["lunes", "fr", "origen", "costo"])
+    ap["lunes"] = (ap["fecha"] - pd.to_timedelta(ap["fecha"].dt.dayofweek, unit="D")).dt.normalize()
+    A = ap.groupby(["lunes", "fr"])["costo_calculado"].sum().reset_index().rename(columns={"costo_calculado": "costo"})
+    A["origen"] = "App (registro diario)"
+    H = pd.concat([H, A], ignore_index=True)
+    H["Frente"] = H["fr"].map(NOMBRE_FRENTE).fillna(H["fr"].map(lambda x: "Sin frente" if x == "SF" else "19 - Transversal (no presup.)" if x == "19" else f"Frente {x}"))
+    return H, ini_app
+
+
+def mostrar_historico_semanal(R, mo_base, aj):
+    st.markdown("#### 📈 Histórico semanal de costo por frente (desde abril)")
+    try:
+        H, ini_app = _historico_semanal(R, mo_base, aj, cargar_programacion(), cargar_parametros()[2])
+    except Exception as e:
+        st.warning(f"No se pudo armar el histórico semanal ({e}).")
+        return
+    if H.empty:
+        return
+    H["tipo"] = np.where(H["origen"].str.startswith("App"), "App (registro diario)", "Nómina mensual repartida")
+    sem = H.groupby(["lunes", "Frente", "tipo"])["costo"].sum().reset_index()
+    sem["Semana"] = sem["lunes"].apply(lambda d: f"{_f(d)}")
+    sem["M"] = sem["costo"] / 1e6
+    orden = [_f(d) for d in sorted(sem["lunes"].unique())]
+    fig = px.bar(sem.sort_values("lunes"), x="Semana", y="M", color="Frente", pattern_shape="tipo",
+                 pattern_shape_map={"Nómina mensual repartida": "/", "App (registro diario)": ""},
+                 labels={"M": "Millones de pesos", "Semana": "Semana (lunes)", "tipo": ""},
+                 color_discrete_sequence=PALETA_CATEGORICA)
+    fig.update_xaxes(categoryorder="array", categoryarray=orden)
+    fig.update_layout(height=420, barmode="stack", legend=dict(orientation="h", y=-0.25), margin=dict(l=10, r=10, t=10, b=10))
+    st.plotly_chart(fig, width='stretch')
+    nom = H[H["tipo"] != "App (registro diario)"]
+    st.caption(f"Maestros, oficiales y ayudantes. **Rayado** = nómina SINCO del mes repartida por días hábiles (lunes a sábado sin festivos), "
+               f"solo para los días antes del {_f(ini_app)}; desde ese día, **sólido** = la app tal cual. "
+               f"Los códigos GG no dicen frente: se reparten según los ítems de la persona ese mes o según los frentes donde trabaja en la app "
+               f"(solo frentes que avanzaron ese mes según la curva S). Sin frente: $ {nom.loc[nom['fr'] == 'SF', 'costo'].sum()/1e6:,.1f} M.")
+    with st.expander("Ver la matriz semana × frente ($ M) y de dónde sale cada valor"):
+        mz = sem.pivot_table(index="lunes", columns="Frente", values="M", aggfunc="sum", fill_value=0)
+        mz["Total"] = mz.sum(axis=1)
+        mz.insert(0, "Fuente", sem.groupby("lunes")["tipo"].agg(lambda s: " + ".join(sorted(set(s)))))
+        mz.index = [_f(d, True) for d in mz.index]
+        st.dataframe(mz.style.format({c: "{:,.1f}" for c in mz.columns if c != "Fuente"}), width='stretch')
+        org = H.groupby("origen")["costo"].sum().div(1e6).round(1).reset_index().rename(columns={"origen": "Cómo se asignó el frente", "costo": "$ M"})
+        st.dataframe(org, hide_index=True, width='stretch')
+
+
 def mostrar_mo_operativa(mo_base):
     pa, mop, U, rs = cargar_parametros()
     url = U.get("url_bd_nomina", "") or URL_BD_NOMINA   # el parámetro de Umbrales, si existe, manda
@@ -1549,6 +1678,9 @@ def mostrar_mo_operativa(mo_base):
         st.plotly_chart(fig, width='stretch')
     st.caption("Lo facturado se asigna al mes así: corte del 24 del mes + corte del 3 del mes siguiente. "
                + (f"Meses estimados con la app ({', '.join(est)}): la app queda en promedio ~8 % por debajo de la nómina." if est else ""))
+
+    # ---- histórico semanal (nómina repartida antes de la app + app tal cual)
+    mostrar_historico_semanal(R, mo_base, aj)
 
     # ---- por frente
     st.markdown("#### Oficiales y ayudantes por frente")
