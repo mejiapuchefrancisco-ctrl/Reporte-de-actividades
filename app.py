@@ -1183,7 +1183,7 @@ def mostrar_presupuesto(mo_base):
 
         a1 = J[(J["mo_per"] > 0) & (J["pMO"] > 0) & (J["pct_antes"] >= 0.999)].copy()
         a2 = J[(J["mo_per"] > 0) & (J["pMO"] > 0) & (J["pct_antes"] < 0.999) & (J["pct_hasta"] > 0) & (J["mo_acu"] > J["mo_paga_acu"])].copy()
-        a2["Exceso"] = a2["mo_acu"] - a2["mo_paga_acu"]
+        a2["Por cobrar o sobrecosto"] = a2["mo_acu"] - a2["mo_paga_acu"]
         a3 = J[(J["mo_per"] > 0) & (J["pMO"] <= 0)].copy()
         a3["Tipo"] = np.select([a3["cod"].str.startswith("SUP"), a3["cod"].str.startswith("NP"), a3["venta"] > 0],
                                ["Supervisión de maestro (va a la A)", "No presupuestada", "Subcontratada en el APU"], "Sin venta en el contrato")
@@ -1194,14 +1194,14 @@ def mostrar_presupuesto(mo_base):
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("🔴 Ítems ya cobrados que siguen gastando MO", f"$ {a1['mo_per'].sum()/1e6:,.1f} M")
         m1.caption(f"{len(a1)} ítems · costo sin ingreso")
-        m2.metric("🔴 MO que ya pasó lo que paga el APU", f"$ {a2['Exceso'].sum()/1e6:,.1f} M")
+        m2.metric("🔴 MO que ya pasó lo que paga el APU", f"$ {a2['Por cobrar o sobrecosto'].sum()/1e6:,.1f} M")
         m2.caption(f"{len(a2)} ítems · exceso acumulado")
         m3.metric("🟠 MO en actividades sin MO en el APU", f"$ {a3['mo_per'].sum()/1e6:,.1f} M")
         m3.caption(f"{a3['cod'].nunique()} códigos · nadie la paga hoy")
         m4.metric("⚪ MO en obra aún sin facturar", f"$ {a4['mo_per'].sum()/1e6:,.1f} M")
         m4.caption(f"{len(a4)} ítems · debe entrar en el próximo corte")
 
-        fmt_m = {"MO del periodo": "{:,.0f}", "MO gastada (acum.)": "{:,.0f}", "MO que paga el APU": "{:,.0f}", "Exceso": "{:,.0f}", "% facturado": "{:.0%}"}
+        fmt_m = {"MO del periodo": "{:,.0f}", "MO gastada (acum.)": "{:,.0f}", "MO que paga el APU": "{:,.0f}", "Por cobrar o sobrecosto": "{:,.0f}", "% facturado": "{:.0%}"}
         with st.expander(f"🔴 1. Ya cobrados al 100 % y siguen gastando MO ({len(a1)})", expanded=len(a1) > 0):
             st.markdown("**Decisión:** el residente confirma qué pasó. Si es **repaso o garantía** → es costo sin ingreso, va a plan de mejora. "
                         "Si es **código equivocado** en la app → se corrige el código del registro.")
@@ -1210,7 +1210,7 @@ def mostrar_presupuesto(mo_base):
         with st.expander(f"🔴 2. La MO gastada ya superó lo que paga el APU por lo facturado ({len(a2)})", expanded=len(a2) > 0):
             st.markdown("**Decisión:** si la cantidad real es mayor que la facturada → **cobrarla en el próximo corte**. "
                         "Si no → revisar **rendimiento o tamaño de la cuadrilla** con el residente.")
-            t = a2.sort_values("Exceso", ascending=False)[["Frente", "Residente", "cod", "Actividad", "pct_hasta", "mo_paga_acu", "mo_acu", "Exceso"]]
+            t = a2.sort_values("Por cobrar o sobrecosto", ascending=False)[["Frente", "Residente", "cod", "Actividad", "pct_hasta", "mo_paga_acu", "mo_acu", "Por cobrar o sobrecosto"]]
             st.dataframe(t.rename(columns={"cod": "Código", "pct_hasta": "% facturado", "mo_paga_acu": "MO que paga el APU",
                                            "mo_acu": "MO gastada (acum.)"}).style.format(fmt_m), hide_index=True, width='stretch')
             st.caption("Acumulado hasta el fin del periodo. La app solo tiene registros desde el 17-ago, así que el exceso real es igual o mayor.")
@@ -1228,7 +1228,7 @@ def mostrar_presupuesto(mo_base):
         buf = _io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as xw:
             for nom, d, cols in [("1 Cobrados que gastan MO", a1, ["Frente", "Residente", "cod", "Actividad", "mo_per"]),
-                                 ("2 MO supera el APU", a2, ["Frente", "Residente", "cod", "Actividad", "pct_hasta", "mo_paga_acu", "mo_acu", "Exceso"]),
+                                 ("2 MO supera el APU", a2, ["Frente", "Residente", "cod", "Actividad", "pct_hasta", "mo_paga_acu", "mo_acu", "Por cobrar o sobrecosto"]),
                                  ("3 MO sin MO en APU", a3, ["Frente", "Residente", "Tipo", "cod", "Actividad", "mo_per"]),
                                  ("4 Obra sin facturar", a4, ["Frente", "Residente", "cod", "Actividad", "pct_hasta", "mo_per"])]:
                 d[cols].rename(columns={"cod": "Código", "mo_per": "MO del periodo", "pct_hasta": "% facturado",
@@ -1527,27 +1527,52 @@ def mostrar_historico_semanal(R, mo_base, aj):
         return
     if H.empty:
         return
+    import plotly.graph_objects as go
     H["tipo"] = np.where(H["origen"].str.startswith("App"), "App (registro diario)", "Nómina mensual repartida")
-    sem = H.groupby(["lunes", "Frente", "tipo"])["costo"].sum().reset_index()
-    sem["Semana"] = sem["lunes"].apply(lambda d: f"{_f(d)}")
-    sem["M"] = sem["costo"] / 1e6
-    orden = [_f(d) for d in sorted(sem["lunes"].unique())]
-    fig = px.bar(sem.sort_values("lunes"), x="Semana", y="M", color="Frente", pattern_shape="tipo",
-                 pattern_shape_map={"Nómina mensual repartida": "/", "App (registro diario)": ""},
-                 labels={"M": "Millones de pesos", "Semana": "Semana (lunes)", "tipo": ""},
-                 color_discrete_sequence=PALETA_CATEGORICA)
-    fig.update_xaxes(categoryorder="array", categoryarray=orden)
-    fig.update_layout(height=420, barmode="stack", legend=dict(orientation="h", y=-0.25), margin=dict(l=10, r=10, t=10, b=10))
+    # frentes principales con color fijo; los pequeños se agrupan para que la gráfica se lea
+    tot = H.groupby("Frente")["costo"].sum().sort_values(ascending=False)
+    principales = [f_ for f_ in tot.index if f_ != "Sin frente"][:7]
+    H["Grupo"] = np.where(H["Frente"].isin(principales), H["Frente"], np.where(H["Frente"] == "Sin frente", "Sin frente", "Otros frentes"))
+    orden_g = principales + [g for g in ["Otros frentes", "Sin frente"] if g in set(H["Grupo"])]
+    colores = ["#1A5632", "#C9A227", "#1F3A5F", "#B5543C", "#7FB08A", "#6B7F8C", "#7B5EA7", "#B8BEC4", "#E3E6E8"]
+    sem = H.groupby(["lunes", "Grupo"])["costo"].sum().unstack("Grupo").reindex(columns=orden_g).fillna(0) / 1e6
+    sem = sem.sort_index()
+    es_nom = sem.index < ini_app
+    fig = go.Figure()
+    for k, g in enumerate(orden_g):
+        fig.add_bar(x=sem.index, y=sem[g], name=g, marker_color=colores[k % len(colores)],
+                    marker_opacity=[0.55 if n else 1.0 for n in es_nom],
+                    hovertemplate=f"<b>{g}</b><br>Semana del %{{x|%d-%b}}<br>$ %{{y:,.1f}} M<extra></extra>")
+    total = sem.sum(axis=1)
+    fig.add_scatter(x=sem.index, y=total, mode="text", text=[f"{v:,.0f}" for v in total], textposition="top center",
+                    textfont=dict(size=10, color="#4B5563"), showlegend=False, hoverinfo="skip")
+    x0 = sem.index.min() - pd.Timedelta(days=3.5)
+    corte = ini_app - pd.Timedelta(days=ini_app.dayofweek) - pd.Timedelta(days=3.5)
+    x1 = sem.index.max() + pd.Timedelta(days=3.5)
+    fig.add_vrect(x0=x0, x1=corte, fillcolor="#F1F3F2", opacity=0.6, line_width=0, layer="below",
+                  annotation_text="Nómina SINCO mensual repartida por días hábiles", annotation_position="top left",
+                  annotation_font=dict(size=11, color="#6B7280"))
+    fig.add_vrect(x0=corte, x1=x1, fillcolor="#FFFFFF", opacity=0, line_width=0,
+                  annotation_text="App (registro diario)", annotation_position="top left", annotation_font=dict(size=11, color="#6B7280"))
+    fig.add_vline(x=corte, line_dash="dot", line_color="#9CA3AF")
+    fig.update_layout(barmode="stack", height=460, bargap=0.25, margin=dict(l=10, r=10, t=40, b=10),
+                      yaxis=dict(title="Millones de pesos", range=[0, total.max() * 1.18]),
+                      xaxis=dict(title="", tickvals=list(sem.index[::2]), ticktext=[_f(d) for d in sem.index[::2]]),
+                      legend=dict(orientation="h", y=-0.12, x=0, traceorder="normal", title_text=""))
     st.plotly_chart(fig, width='stretch')
+    otros = [f_ for f_ in tot.index if f_ not in principales and f_ != "Sin frente"]
+    if otros:
+        st.caption("Otros frentes: " + ", ".join(otros) + ".")
     nom = H[H["tipo"] != "App (registro diario)"]
-    st.caption(f"Maestros, oficiales y ayudantes. **Rayado** = nómina SINCO del mes repartida por días hábiles (lunes a sábado sin festivos), "
-               f"solo para los días antes del {_f(ini_app)}; desde ese día, **sólido** = la app tal cual. "
+    st.caption(f"Maestros, oficiales y ayudantes. El número arriba de cada barra es el total de la semana en $ M. **Barras claras** = nómina SINCO del mes repartida por días hábiles "
+               f"(lunes a sábado sin festivos) hasta el {_f(ini_app - pd.Timedelta(days=1))}; **barras fuertes** = la app tal cual desde el {_f(ini_app)}. "
                f"Los códigos GG no dicen frente: se reparten según los ítems de la persona ese mes o según los frentes donde trabaja en la app "
                f"(solo frentes que avanzaron ese mes según la curva S). Sin frente: $ {nom.loc[nom['fr'] == 'SF', 'costo'].sum()/1e6:,.1f} M.")
     with st.expander("Ver la matriz semana × frente ($ M) y de dónde sale cada valor"):
-        mz = sem.pivot_table(index="lunes", columns="Frente", values="M", aggfunc="sum", fill_value=0)
+        mz = (H.groupby(["lunes", "Frente"])["costo"].sum() / 1e6).unstack("Frente").fillna(0)
+        mz = mz[[c for c in tot.index if c in mz.columns]]
         mz["Total"] = mz.sum(axis=1)
-        mz.insert(0, "Fuente", sem.groupby("lunes")["tipo"].agg(lambda s: " + ".join(sorted(set(s)))))
+        mz.insert(0, "Fuente", H.groupby("lunes")["tipo"].agg(lambda s: " + ".join(sorted(set(s)))))
         mz.index = [_f(d, True) for d in mz.index]
         st.dataframe(mz.style.format({c: "{:,.1f}" for c in mz.columns if c != "Fuente"}), width='stretch')
         org = H.groupby("origen")["costo"].sum().div(1e6).round(1).reset_index().rename(columns={"origen": "Cómo se asignó el frente", "costo": "$ M"})
@@ -1735,9 +1760,9 @@ def mostrar_mo_operativa(mo_base):
     T["Residente"] = T["fr"].map(RES).fillna("—")
     T["Actividad"] = T["desc"].fillna("").astype(str).str.slice(0, 80)
     supera = T[(T["MO"] > 0) & (T["pMO"] > 0) & (T["MO"] > T["pMO"])].copy()
-    supera["Exceso"] = supera["MO"] - supera["pMO"]
+    supera["Sobrecosto"] = supera["MO"] - supera["pMO"]
     sobre_fact = T[(T["MO"] > 0) & (T["pMO"] > 0) & (T["MO"] <= T["pMO"]) & (T["facturado"] > 0) & (T["MO"] > T["paga_fact"])].copy()
-    sobre_fact["Exceso"] = sobre_fact["MO"] - sobre_fact["paga_fact"]
+    sobre_fact["Por cobrar o sobrecosto"] = sobre_fact["MO"] - sobre_fact["paga_fact"]
     sa = sin_apu.copy()
     sa["Tipo"] = np.select([sa.index.str.upper().str.startswith("NP"), sa["venta"] > 0], ["No presupuestada", "Subcontratada en el APU"], "Sin venta en el contrato")
     PER = R[R["imputa"] == "A"].groupby(["clave", "gA"]).agg(Nombre=("nombre", "last"), real=("costo", "sum")).reset_index()
@@ -1747,21 +1772,21 @@ def mostrar_mo_operativa(mo_base):
     vac = PR[PR["clave"].isna()].groupby("g")["proy"].sum()
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("🔴 Ítems que ya superan la MO de todo su APU", f"$ {supera['Exceso'].sum()/1e6:,.1f} M")
+    m1.metric("🔴 Sobrecosto: MO por encima de todo su APU", f"$ {supera['Sobrecosto'].sum()/1e6:,.1f} M")
     m1.caption(f"{len(supera)} ítems · exceso sin forma de cobrarse")
     m2.metric("🟠 MO en APU sin MO propia", f"$ {sa['MO'].sum()/1e6:,.1f} M")
     m2.caption(f"{len(sa)} ítems · {sa['MO'].sum()/obra_mo:.0%} de lo cargado a obra" if obra_mo else "")
-    m3.metric("🟠 MO por encima de lo facturado", f"$ {sobre_fact['Exceso'].sum()/1e6:,.1f} M")
+    m3.metric("🟠 MO por encima de lo facturado", f"$ {sobre_fact['Por cobrar o sobrecosto'].sum()/1e6:,.1f} M")
     m3.caption(f"{len(sobre_fact)} ítems · cobrar en el próximo corte o revisar")
     m4.metric("🟡 A de personas no proyectadas", f"$ {no_proy['real'].sum()/1e6:,.1f} M")
     m4.caption(f"{len(no_proy)} personas · vacantes proyectadas sin llenar $ {vac.sum()/1e6:,.1f} M")
 
-    fmt = {c: "{:,.0f}" for c in ["MO real", "MO del APU (total)", "APU paga por lo facturado", "Exceso", "Proyectado", "Real A", "Diferencia"]}
+    fmt = {c: "{:,.0f}" for c in ["MO real", "MO del APU (total)", "APU paga por lo facturado", "Sobrecosto", "Por cobrar o sobrecosto", "Proyectado", "Real A", "Diferencia"]}
     with st.expander(f"🔴 1. Ítems que ya gastaron más MO que la de TODO su APU ({len(supera)})", expanded=len(supera) > 0):
-        st.markdown("**Decisión:** aunque se facture el 100 %, este exceso no se recupera. Revisar con el residente si es **código mal asignado** "
+        st.markdown("**Sobrecosto** = MO real − MO de TODO el APU: es pérdida, no utilidad. **Decisión:** aunque se facture el 100 %, esto no se recupera. Revisar con el residente si es **código mal asignado** "
                     "(corregir en la nómina), **mayor cantidad** (tramitar adicional) o **bajo rendimiento** (plan de mejora).")
-        t = supera.sort_values("Exceso", ascending=False).reset_index().rename(columns={"index": "Código", "cod": "Código"})
-        st.dataframe(t[["Frente", "Residente", "Código", "Actividad", "MO", "pMO", "Exceso"]]
+        t = supera.sort_values("Sobrecosto", ascending=False).reset_index().rename(columns={"index": "Código", "cod": "Código"})
+        st.dataframe(t[["Frente", "Residente", "Código", "Actividad", "MO", "pMO", "Sobrecosto"]]
                      .rename(columns={"MO": "MO real", "pMO": "MO del APU (total)"}).style.format(fmt), hide_index=True, width='stretch')
     with st.expander(f"🟠 2. Personal propio en actividades cuyo APU no trae MO propia ({len(sa)})"):
         st.markdown("**Decisión según el tipo:** *Subcontratada* → ¿por qué trabaja personal propio? descontar al subcontratista o justificar. "
@@ -1773,9 +1798,10 @@ def mostrar_mo_operativa(mo_base):
         st.dataframe(t[["Frente", "Residente", "Tipo", "Código", "Actividad", "MO"]].rename(columns={"MO": "MO real"}).style.format(fmt),
                      hide_index=True, width='stretch')
     with st.expander(f"🟠 3. MO por encima de lo que paga el APU por lo facturado ({len(sobre_fact)})"):
-        st.markdown("**Decisión:** si la cantidad ejecutada es mayor que la facturada → **cobrarla en el próximo corte**. Si no → revisar rendimiento.")
-        t = sobre_fact.sort_values("Exceso", ascending=False).reset_index().rename(columns={"index": "Código", "cod": "Código"})
-        st.dataframe(t[["Frente", "Residente", "Código", "Actividad", "MO", "paga_fact", "Exceso"]]
+        st.markdown("**Por cobrar o sobrecosto** = MO real − lo que el APU paga por lo ya facturado. Si la obra está hecha y falta facturarla, se recupera en el próximo corte; si no, es sobrecosto. "
+                    "**Decisión:** si la cantidad ejecutada es mayor que la facturada → **cobrarla en el próximo corte**. Si no → revisar rendimiento.")
+        t = sobre_fact.sort_values("Por cobrar o sobrecosto", ascending=False).reset_index().rename(columns={"index": "Código", "cod": "Código"})
+        st.dataframe(t[["Frente", "Residente", "Código", "Actividad", "MO", "paga_fact", "Por cobrar o sobrecosto"]]
                      .rename(columns={"MO": "MO real", "paga_fact": "APU paga por lo facturado"}).style.format(fmt), hide_index=True, width='stretch')
     with st.expander("🟡 4. Administración (A) por persona: real contra proyección"):
         st.markdown("**Decisión:** personas **no proyectadas** con costo en la A → incluirlas en la proyección o reasignar su costo. "
