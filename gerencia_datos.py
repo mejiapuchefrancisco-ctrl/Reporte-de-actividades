@@ -207,8 +207,18 @@ def base_nomina(n, aj, estimado_app=None):
     R["clave"] = R.nombre.map(clave_persona)
     R["grupo"] = R.cargo.map(grupo_cargo)
     if len(aj) and {"Nombre", "Grupo"}.issubset(aj.columns):
-        mapa = {clave_persona(a): str(g).strip() for a, g in zip(aj.Nombre, aj.Grupo) if isinstance(a, str) and isinstance(g, str)}
-        R["grupo"] = R.clave.map(mapa).fillna(R.grupo)
+        # columna opcional "Desde" (año-mes, ej. 2026-09): el ajuste aplica desde ese mes
+        desde = aj["Desde"] if "Desde" in aj.columns else pd.Series([None] * len(aj), index=aj.index)
+        for a, g_, d_ in zip(aj.Nombre, aj.Grupo, desde):
+            if not (isinstance(a, str) and isinstance(g_, str)):
+                continue
+            sel = R.clave == clave_persona(a)
+            if isinstance(d_, str) and d_.strip() and d_.strip().lower() != "nan":
+                try:
+                    sel &= R.mes >= pd.Period(d_.strip()[:7], "M")
+                except Exception:
+                    pass
+            R.loc[sel, "grupo"] = g_.strip()
     R = R[R.grupo.isin(["Maestros", "Oficiales", "Ayudantes"])].copy()
     cu = R.cod.str.upper()
     R["fr"] = R.cod.str.extract(r"^(\d\d)\.")[0].fillna(R.cod.str.extract(r"^(?:NP|SUP)-(\d\d)", flags=re.I)[0])
