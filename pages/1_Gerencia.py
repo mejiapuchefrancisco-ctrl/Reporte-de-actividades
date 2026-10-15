@@ -110,6 +110,7 @@ def cargar_app(_ma_hash, ma):
     if "codact" not in mo.columns and "codcat" in mo.columns:
         mo = mo.rename(columns={"codcat": "codact"})
     mo["fecha"] = pd.to_datetime(mo["fecha"], errors="coerce")
+    mo = gd.quitar_excluidos(mo, gd.leer_excluidos(_bytes(URL_PARAMS, "params")))
     mo["horas"] = pd.to_numeric(mo["horas"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
     mo["nombre_norm"] = mo["nombre"].map(gd.normalizar_nombre)
     if ma is None:
