@@ -171,6 +171,37 @@ def etiqueta_semana(fecha):
     return pd.Series({"semana_lunes": lunes, "semana_etiqueta": etiqueta})
 
 
+# ============ PERSONAS EXCLUIDAS DEL CONTEO (14-oct-2026) ============
+# Pestaña "Excluidos" de Parametros_Alertas: personas que desde la fecha "Desde" se registran de otra
+# manera y el dashboard ya no cuenta en los registros de la app (lo anterior queda igual).
+URL_EXCLUIDOS = "https://drive.google.com/uc?export=download&id=1c31oKbuKnXO2XV2AC3n4VOqhQmxm6FTr"
+
+
+@st.cache_data(ttl=600)
+def leer_excluidos():
+    try:
+        ex = pd.read_excel(URL_EXCLUIDOS, sheet_name="Excluidos", dtype=str)
+    except Exception:
+        return []
+    ex = ex.dropna(subset=[ex.columns[0]])
+    desde = ex["Desde"] if "Desde" in ex.columns else [None] * len(ex)
+    return [(" ".join(sorted(normalizar_nombre(n).split())), pd.to_datetime(d, errors="coerce")) for n, d in zip(ex.iloc[:, 0], desde)]
+
+
+def quitar_excluidos(df, col_nombre="nombre", col_fecha="fecha"):
+    lista = leer_excluidos()
+    if not lista or not len(df):
+        return df
+    clave = df[col_nombre].map(lambda s: " ".join(sorted(normalizar_nombre(s).split())))
+    quitar = pd.Series(False, index=df.index)
+    for k, d in lista:
+        m = clave == k
+        if pd.notna(d):
+            m &= df[col_fecha] >= d
+        quitar |= m
+    return df[~quitar].copy()
+
+
 @st.cache_data(ttl=60)
 def cargar_datos():
     # --- Mano de Obra: en vivo desde el Google Sheet de la app de campo ---
@@ -192,6 +223,7 @@ def cargar_datos():
     # El Sheet exporta los decimales con coma ("7,5"): sin esto se perdían las horas con decimales
     mo["horas"] = pd.to_numeric(mo["horas"].astype(str).str.replace(",", ".", regex=False), errors="coerce")
     mo["nombre_norm"] = mo["nombre"].apply(normalizar_nombre)
+    mo = quitar_excluidos(mo)
 
     tarifas = pd.read_excel(URL_TARIFAS, sheet_name="Maestro Personal", header=None)
     header_idx = tarifas[tarifas[0] == "Documento"].index[0]

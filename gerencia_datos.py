@@ -187,6 +187,30 @@ def leer_maestro(b):
     return t
 
 
+def leer_excluidos(b):
+    """Pestaña Excluidos de Parametros_Alertas: [(clave, desde)]. Si no existe, lista vacía."""
+    try:
+        ex = pd.read_excel(io.BytesIO(b), sheet_name="Excluidos", dtype=str)
+    except Exception:
+        return []
+    ex = ex.dropna(subset=[ex.columns[0]])
+    desde = ex["Desde"] if "Desde" in ex.columns else [None] * len(ex)
+    return [(clave_persona(n), pd.to_datetime(d, errors="coerce")) for n, d in zip(ex.iloc[:, 0], desde)]
+
+
+def quitar_excluidos(df, lista, col_nombre="nombre", col_fecha="fecha"):
+    if not lista or df is None or not len(df):
+        return df
+    clave = df[col_nombre].map(clave_persona)
+    quitar = pd.Series(False, index=df.index)
+    for k, d in lista:
+        m_ = clave == k
+        if pd.notna(d):
+            m_ &= df[col_fecha] >= d
+        quitar |= m_
+    return df[~quitar].copy()
+
+
 # ------------------------------------------------------------------ nómina
 def base_nomina(n, aj, estimado_app=None):
     """Una fila por persona × mes × código con costo, grupo e imputación (maestros y GG a la A,
