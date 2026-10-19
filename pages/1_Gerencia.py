@@ -115,7 +115,7 @@ def cargar_sinco():
     return Cs, As
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def cargar_app(_ma_hash, ma):
     """Registros de la app para estimar los meses sin nómina (horas × tarifa × recargo)."""
     try:
