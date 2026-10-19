@@ -510,6 +510,25 @@ INC_HE = {  # horas equivalentes de recargo por tipo de hora (base para el % de 
     "Ordinaria Diurna": 0.0, "Recargo Nocturno (Ordinaria)": 0.35, "Extra Diurna": 1.25, "Extra Nocturna": 1.75,
     "Dominical/Festivo Ordinaria Diurna": 1.9, "Dominical/Festivo Extra Diurna": 2.15, "Dominical/Festivo Extra Nocturna": 2.65,
 }
+FESTIVOS_HE = set(pd.to_datetime([  # festivos de Colombia 2026-2027: no son día laboral (como el domingo)
+    "2026-01-01", "2026-01-12", "2026-03-23", "2026-04-02", "2026-04-03", "2026-05-01", "2026-05-18", "2026-06-08",
+    "2026-06-15", "2026-06-29", "2026-07-20", "2026-08-07", "2026-08-17", "2026-10-12", "2026-11-02", "2026-11-16",
+    "2026-12-08", "2026-12-25", "2027-01-01", "2027-01-11", "2027-03-22", "2027-03-25", "2027-03-26", "2027-05-01",
+    "2027-05-10", "2027-05-31", "2027-06-07", "2027-07-05", "2027-07-20", "2027-08-07", "2027-08-16", "2027-10-18",
+    "2027-11-01", "2027-11-15", "2027-12-08", "2027-12-25"]).date)
+
+
+def dias_laborales(s):
+    """Días de la base de horas extra: días hábiles trabajados (lunes a sábado, sin festivos) más los festivos
+    de lunes a sábado de esa semana. El festivo es día no laboral pero pagado en el salario: entra en la base
+    aunque no se trabaje, y las horas que se trabajen ese día cuentan todas como recargo dominical/festivo."""
+    if s.empty:
+        return 0
+    f = s.dt.date
+    habiles = f[(s.dt.dayofweek < 6) & ~f.isin(FESTIVOS_HE)].nunique()
+    lunes = (s.min() - pd.Timedelta(days=int(s.min().dayofweek))).normalize()
+    fest = sum(1 for i in range(6) if (lunes + pd.Timedelta(days=i)).date() in FESTIVOS_HE)
+    return habiles + fest
 
 
 @st.cache_data(ttl=600)
@@ -620,7 +639,7 @@ def mostrar_alertas(mo_base, tarifas):
     g = w.groupby("nombre_norm")
     per = pd.DataFrame({
         "Nombre": g["nombre"].first(), "Cargo": g["cargo_real"].first(),
-        "Días": g["fecha"].apply(lambda s: s[s.dt.dayofweek < 6].dt.date.nunique()),
+        "Días": g["fecha"].apply(dias_laborales),
         "Horas": g["horas"].sum(), "Horas extra/recargo": g.apply(lambda t: t.loc[t["heq"] > 0, "horas"].sum()),
         "heq": g["heq"].sum(), "tarifa": g["tarifa_hora"].first(),
         "Frente principal": g.apply(lambda t: t.groupby("cod_fr")["horas"].sum().idxmax()),
@@ -813,7 +832,7 @@ def mostrar_alertas(mo_base, tarifas):
         if ww.empty:
             return out
         gg = ww.groupby("nombre_norm")
-        dias = gg["fecha"].apply(lambda x: x[x.dt.dayofweek < 6].dt.date.nunique())
+        dias = gg["fecha"].apply(dias_laborales)
         base = base_sem * (dias / 6).clip(upper=1)
         for nn_, v in (gg["heq"].sum() / base).items():
             out[("1", nn_)] = v

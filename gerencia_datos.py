@@ -60,7 +60,7 @@ def id_drive(url):
     return m.group(1) if m else None
 
 
-def descargar(url, nombre_local=None):
+def descargar(url, nombre_local=None, html_ok=False):
     """Descarga un archivo de Drive (xlsx subido o Google Sheet) y devuelve los bytes.
     Para pruebas sin internet: variable de entorno GERENCIA_LOCAL_<NOMBRE> con la ruta del archivo."""
     if nombre_local:
@@ -78,7 +78,7 @@ def descargar(url, nombre_local=None):
                 b = r.read()
         except Exception:
             continue
-        if b[:2] == b"PK":
+        if b[:2] == b"PK" or (html_ok and b.lstrip()[:1] == b"<" and b"<table" in b[:200000].lower()):
             return b
     raise ValueError(f"No se pudo descargar {nombre_local or url}. Revise que esté compartido como 'Cualquier persona con el enlace'.")
 
@@ -550,3 +550,123 @@ def proyeccion_a(R, pa, base, corte_real, he_real=0.30):
     oa_real = ra["Oficiales y ayudantes"].sum() if "Oficiales y ayudantes" in ra else 0.0
     adm = PM.join(ra.add_prefix("real_"))
     return dict(maestros=EA, oa=dict(proy=oa_proy, real_a=oa_real), adm_mes=adm)
+
+
+# ------------------------------------------------------------------ subcontratistas (exportes SINCO)
+_COD = re.compile(r"(\d{2}(?:\.\d{2}){1,5}(?:\.\d{1,2})?(?:GG)?)")
+
+
+def _tabla_html(b):
+    if isinstance(b, (bytes, bytearray)) and b[:2] == b"PK":   # si Drive lo convirtió a Hoja de cálculo
+        x = pd.read_excel(io.BytesIO(b), header=None)
+        fila = next(i for i in range(min(15, len(x))) if x.iloc[i].astype(str).str.contains("Contrato").any())
+        t = x.iloc[fila + 1:].copy()
+        t.columns = [str(c) for c in x.iloc[fila]]
+        return t.reset_index(drop=True)
+    s = b.decode("latin-1") if isinstance(b, (bytes, bytearray)) else b
+    t = max(pd.read_html(io.StringIO(s)), key=lambda x: x.size)
+    t.columns = [str(c[-1]) if isinstance(c, tuple) else str(c) for c in t.columns]
+    return t
+
+
+def leer_contratos_sinco(b):
+    """SINCO > Informe contratos detallado (archivo .xls tal como sale de SINCO)."""
+    t = _tabla_html(b).iloc[:, :20]
+    t.columns = ["proy", "cod_ctta", "contrato", "grupo", "ctta", "actividad", "insumo", "insumo_desc", "razon", "anio",
+                 "f_elab", "f_ini", "v_orig", "v_adic", "v_contrato", "cant", "und", "vu", "vu_iva", "vt_iva"]
+    t["contrato"] = pd.to_numeric(t.contrato, errors="coerce")
+    t = t[t.contrato.notna()].copy()
+    t["contrato"] = t.contrato.astype(int)
+    for c in ["grupo", "v_contrato", "cant", "vu", "vt_iva"]:
+        t[c] = pd.to_numeric(t[c], errors="coerce")
+    t["cod"] = t.actividad.astype(str).str.extract(r"^\s*([\w\.]+)\s*-")[0]
+    t["base"] = t.cant.fillna(0) * t.vu.fillna(0)
+    t["ctta"] = t.ctta.astype(str).str.strip()
+    return t
+
+
+def leer_actas_sinco(b, C):
+    """SINCO > Detallado de actas (archivo .xls tal como sale de SINCO). El ítem sale del grupo del contrato o del concepto."""
+    t = _tabla_html(b).iloc[:, :10]
+    t.columns = ["concepto", "tipo", "um", "contrato", "acta", "fecha", "cant", "vu", "iva", "vt"]
+    t["contrato"] = pd.to_numeric(t.contrato, errors="coerce")
+    t = t[t.contrato.notna()].copy()
+    t["contrato"] = t.contrato.astype(int)
+    for c in ["acta", "cant", "vu", "iva", "vt"]:
+        t[c] = pd.to_numeric(t[c], errors="coerce")
+    t["fecha"] = pd.to_datetime(t.fecha, dayfirst=True, errors="coerce")
+    t["base"] = t.cant.fillna(0) * t.vu.fillna(0)
+    t["grupo"] = pd.to_numeric(t.concepto.astype(str).str.extract(r"^\s*(\d+)\s*-")[0], errors="coerce")
+    g = C.dropna(subset=["grupo"]).groupby(["contrato", "grupo"]).cod.first()
+    t["cod"] = [g.get((c, gr)) if pd.notna(gr) and str(tp).strip() == "Grupo" else None for c, gr, tp in zip(t.contrato, t.grupo, t.tipo)]
+    t["cod"] = t.cod.fillna(t.concepto.astype(str).str.extract(_COD)[0])
+    return t
+
+
+def subcontratistas(C, A, mop, items, P, hoy=None):
+    """Contratado, pagado, pagado sin cobrar y contratado por encima de la proyección SINCO, por ítem, frente y contratista.
+    Ítems directos = los que están en MO_proyectada (proyección SINCO por ítem); el resto se reporta como indirectos."""
+    hoy = pd.Timestamp(hoy or pd.Timestamp.today()).normalize()
+    m = mop.copy()
+    m["Código"] = m["Código"].astype(str).str.strip()
+    m = m.drop_duplicates("Código").set_index("Código")
+    con = C.groupby("cod").base.sum()
+    pag = A.groupby("cod").base.sum()
+    it = pd.DataFrame({"contratado": con, "pagado": pag}).fillna(0)
+    it = it[(it.contratado > 0) | (it.pagado > 0)]
+    it["directo"] = it.index.isin(m.index)
+    it["fr"] = it.index.map(m["Frente"].astype(str).str.zfill(2)).fillna("—")
+    it["desc"] = it.index.map(m["Descripción"]).fillna("")
+    it["proyectado"] = it.index.map(m["Proyectado total"]).fillna(0)
+    it["pc"] = it.index.map(items.pc if items is not None and "pc" in items else pd.Series(dtype=float)).fillna(0)
+    it["cobrado"] = it.index.map(items.cob if items is not None and "cob" in items else pd.Series(dtype=float)).fillna(0)
+    it["sobre"] = np.where(it.directo, (it.contratado - it.proyectado).clip(lower=0), 0)
+    it["venta"] = it.index.map(items.venta if items is not None and "venta" in items else pd.Series(dtype=float)).fillna(0)
+    # pagado sin cobrar solo en ítems que se venden a AIRPLAN (los transversales sin venta no se cobran)
+    it["sin_cobrar"] = np.where(it.directo & (it.venta > 0), (it.pagado - it.contratado * it.pc).clip(lower=0), 0)
+    quien = C.groupby("cod").ctta.agg(lambda s: ", ".join(sorted(set(x[:28] for x in s))))
+    it["contratistas"] = it.index.map(quien).fillna("")
+    d = it[it.directo]
+    out = dict(items=it)
+    out["kpi"] = dict(contratado=d.contratado.sum(), pagado=d.pagado.sum(), pendiente=(d.contratado - d.pagado).clip(lower=0).sum(),
+                      sobre=d.sobre.sum(), n_sobre=int((d.sobre > 0).sum()), sin_cobrar=d.sin_cobrar.sum(),
+                      proy_contratado=d.loc[d.contratado > 0, "proyectado"].sum(),
+                      ind_contratado=it[~it.directo].contratado.sum(), ind_pagado=it[~it.directo].pagado.sum(),
+                      ult_acta=A.fecha.max(), n_contratos=C.contrato.nunique())
+    out["frentes"] = d.groupby("fr").agg(contratado=("contratado", "sum"), pagado=("pagado", "sum"), proyectado=("proyectado", "sum"),
+                                         sobre=("sobre", "sum"), sin_cobrar=("sin_cobrar", "sum"), cobrado=("cobrado", "sum"))
+    # por contratista
+    C2 = C.assign(directo=C.cod.isin(m.index))
+    A2 = A.merge(C.drop_duplicates("contrato")[["contrato", "ctta"]], on="contrato", how="left")
+    cc = C2.groupby("ctta").agg(contratos=("contrato", "nunique"), contratado=("base", "sum"))
+    cc["pagado"] = A2.groupby("ctta").base.sum()
+    cc["ult_acta"] = A2.groupby("ctta").fecha.max()
+    ci = C2[C2.directo].groupby(["ctta", "cod"]).base.sum().rename("c").reset_index()
+    ci["peso"] = ci.c / ci.cod.map(ci.groupby("cod").c.sum())
+    ci["sobre"] = ci.peso * ci.cod.map(it.sobre)
+    ci["sin_cobrar"] = ci.peso * ci.cod.map(it.sin_cobrar)
+    cc = cc.join(ci.groupby("ctta")[["sobre", "sin_cobrar"]].sum()).fillna({"pagado": 0, "sobre": 0, "sin_cobrar": 0})
+    cc["pct_pagado"] = np.where(cc.contratado > 0, cc.pagado / cc.contratado, np.nan)
+    out["contratistas"] = cc.sort_values("contratado", ascending=False)
+    # mes a mes: pagado contra lo contratado que ya se ejecutó (contratado del ítem × avance del frente en la curva S)
+    Ad = A[A.cod.isin(m.index)].dropna(subset=["fecha"]).copy()
+    Ad["mes"] = Ad.fecha.dt.to_period("M")
+    pm = Ad.groupby("mes").base.sum()
+    Pf = P[(P.fr != "TOTAL") & P.fr.notna()]
+    ev = Pf.pivot_table(index="semana", columns="fr", values="EV", aggfunc="sum")
+    cs = Pf.groupby("fr").costo.first()
+    ok = [s for s in ev.index if s <= hoy and ev.loc[s].sum() > 0]
+    av = (ev.loc[ok] / cs).fillna(0) if ok else pd.DataFrame()
+    cfr = d.groupby("fr").contratado.sum()
+    meses = pd.period_range(pm.index.min() if len(pm) else hoy.to_period("M"), hoy.to_period("M"), freq="M")
+    filas = []
+    for mm in meses:
+        fin = min(mm.end_time.normalize(), hoy)
+        sem = [s for s in ok if s <= fin]
+        ej = (av.loc[sem[-1]].reindex(cfr.index).fillna(0) * cfr).sum() if sem else 0.0
+        filas.append((mm, pm.get(mm, 0.0), ej))
+    t = pd.DataFrame(filas, columns=["mes", "pagado", "ejecutado_acum"]).set_index("mes")
+    t["pagado_acum"] = t.pagado.cumsum()
+    t["pendiente_estimado"] = (t.ejecutado_acum - t.pagado_acum).clip(lower=0)
+    out["mensual"] = t
+    return out
