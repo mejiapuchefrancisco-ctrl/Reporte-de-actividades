@@ -431,6 +431,14 @@ def agregar_referencia(x):
 
 mo, inv, mov, tarifas = cargar_datos()
 med = cargar_mediciones()
+
+
+@st.cache_data(ttl=60)
+def _hora_lectura():
+    return pd.Timestamp.now(tz="America/Bogota").tz_localize(None)
+
+
+HORA_LECTURA = _hora_lectura()
 # App v4 (19-oct-2026): filas que no son horas trabajadas.
 #  - "[CANTIDAD SEMANAL] ...": cierre semanal de cantidades del maestro (0 h, cantidad en la columna cantidad).
 #  - "[NOVEDAD] ...": no vino, incapacidad, permiso o vacaciones (0 h). Solo cuentan como "registrado" en Cobertura.
@@ -473,10 +481,17 @@ with st.sidebar:
         max_value=fecha_max.date() if pd.notna(fecha_max) else None,
     )
     st.divider()
+    if st.button("🔄 Actualizar datos ahora", type="primary", use_container_width=True,
+                 help="Vuelve a leer el Sheet de la app, el Maestro de Personal y Parametros_Alertas. "
+                      "Úsalo después de registrar o ajustar algo en la app o en el Sheet."):
+        st.cache_data.clear()
+        st.rerun()
     st.info(
         "🟢 **Mano de Obra: datos en vivo**\n\n"
         f"{len(mo)} registro(s) guardados por los maestros desde la app de campo "
-        "(a partir del 7 de septiembre de 2026). Se actualiza solo al refrescar."
+        f"(a partir del 7 de septiembre de 2026). Leídos a las **{HORA_LECTURA:%H:%M}** ({HORA_LECTURA:%d-%b}). "
+        "Gerencia y Control interno usan exactamente los mismos registros y filtros. "
+        "Se vuelven a leer solos cada minuto al usar la página, o al instante con el botón."
     )
 
 VISTA_GERENCIA = (vista == "Gerencia")
@@ -2045,10 +2060,14 @@ if VISTA_GERENCIA:
         st.caption(
             "Compara el roster completo del Maestro de Personal contra quien "
             "registro actividad en los dias presentes en el periodo filtrado "
-            "(barra lateral). Solo incluye cargos de obra, no almacen/servicios generales."
+            "(barra lateral), sin domingos ni festivos. Solo incluye cargos de obra, no almacen/servicios generales. "
+            "Las novedades (incapacidad, permiso...) cuentan como día registrado."
         )
 
-        dias_periodo = sorted(mo_f["fecha"].dropna().dt.date.unique())
+        # Mismos días que "Cobertura de registro" (Control interno): sin domingos ni festivos, solo días ya cerrados
+        _hoy_cob = pd.Timestamp.now(tz="America/Bogota").tz_localize(None).normalize().date()
+        dias_periodo = sorted(d for d in mo_f["fecha"].dropna().dt.date.unique()
+                              if d.weekday() < 6 and d not in FESTIVOS_HE and d < _hoy_cob)
         roster_obra = tarifas[
             tarifas["CargoReal"].astype(str).str.contains("Maestro|Oficial|Ayudante", case=False, na=False)
             & ~tarifas["CargoReal"].astype(str).str.contains("Almacen|Servicios Generales", case=False, na=False)
@@ -2484,7 +2503,9 @@ if not VISTA_GERENCIA:
             roster = roster[["NombreCompleto" if "NombreCompleto" in roster.columns else "NombreNormalizado", "CargoReal", "nombre_norm"]]
             roster.columns = ["Persona", "Cargo", "nombre_norm"]
             roster = quitar_excluidos_roster(roster, "Persona", dias[-1] if dias else lunes)
-            reg = mo[mo["fecha"].isin(dias)]
+            # mismos frentes que la barra lateral (igual que la vista Gerencia)
+            mo_cob = mo[mo["frente"].isin(frente_sel)] if frente_sel else mo
+            reg = mo_cob[mo_cob["fecha"].isin(dias)]
             # novedades de la app (no vino, incapacidad, permiso, vacaciones): cuentan como día registrado
             nov = MO_NOV[MO_NOV["fecha"].dt.normalize().isin(dias)] if not MO_NOV.empty else MO_NOV
             nov_dia = {(r.nombre_norm, pd.Timestamp(r.fecha).normalize()): str(r.actDesc).replace("[NOVEDAD]", "").strip()
@@ -2518,7 +2539,8 @@ if not VISTA_GERENCIA:
                 st.caption(f"Personal de obra del Maestro de Personal (maestros, oficiales y ayudantes) · {len(dias)} día(s) hábil(es) "
                            "ya cerrados, sin festivos. Cada casilla muestra las horas registradas ese día, o la novedad "
                            "(incapacidad, permiso, no vino, vacaciones), que también cuenta como día registrado. "
-                           "No aparecen las personas de la pestaña Excluidos de Parametros_Alertas.")
+                           "No aparecen las personas de la pestaña Excluidos de Parametros_Alertas. "
+                           "Usa los mismos frentes de la barra lateral que la vista Gerencia.")
                 filtro = st.multiselect("Mostrar", ["Sin registro", "Parcial", "Completo"], default=["Sin registro", "Parcial", "Completo"])
                 vista = cob[cob["Estado"].isin(filtro)]
                 colores = {"Sin registro": "background-color:#FDEBEA;color:#B4453A;font-weight:600",
