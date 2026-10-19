@@ -202,6 +202,19 @@ def quitar_excluidos(df, col_nombre="nombre", col_fecha="fecha"):
     return df[~quitar].copy()
 
 
+def quitar_excluidos_roster(roster, col_nombre, fecha_ref):
+    """Saca del roster (Maestro de Personal) a quien está en la pestaña Excluidos desde antes de fecha_ref
+    (o sin fecha). Así la cobertura no los muestra como 'Sin registro'."""
+    lista = leer_excluidos()
+    if not lista or not len(roster):
+        return roster
+    clave = roster[col_nombre].map(lambda s: " ".join(sorted(normalizar_nombre(s).split())))
+    quitar = pd.Series(False, index=roster.index)
+    for k, d in lista:
+        quitar |= (clave == k) & (pd.isna(d) or d <= pd.Timestamp(fecha_ref))
+    return roster[~quitar]
+
+
 @st.cache_data(ttl=60)
 def cargar_datos():
     # --- Mano de Obra: en vivo desde el Google Sheet de la app de campo ---
@@ -2040,6 +2053,8 @@ if VISTA_GERENCIA:
             tarifas["CargoReal"].astype(str).str.contains("Maestro|Oficial|Ayudante", case=False, na=False)
             & ~tarifas["CargoReal"].astype(str).str.contains("Almacen|Servicios Generales", case=False, na=False)
         ].copy()
+        if dias_periodo:
+            roster_obra = quitar_excluidos_roster(roster_obra, "NombreCompleto" if "NombreCompleto" in roster_obra.columns else "NombreNormalizado", max(dias_periodo))
 
         if not dias_periodo or roster_obra.empty:
             st.info("No hay suficientes datos en el periodo filtrado para calcular asistencia.")
@@ -2468,8 +2483,14 @@ if not VISTA_GERENCIA:
             roster = tarifas[tarifas["CargoReal"].astype(str).str.contains("Maestro|Oficial|Ayudante", case=False, na=False)]
             roster = roster[["NombreCompleto" if "NombreCompleto" in roster.columns else "NombreNormalizado", "CargoReal", "nombre_norm"]]
             roster.columns = ["Persona", "Cargo", "nombre_norm"]
+            roster = quitar_excluidos_roster(roster, "Persona", dias[-1] if dias else lunes)
             reg = mo[mo["fecha"].isin(dias)]
-            hechos = reg.groupby("nombre_norm")["fecha"].apply(lambda s: set(s.dt.normalize())).to_dict()
+            # novedades de la app (no vino, incapacidad, permiso, vacaciones): cuentan como día registrado
+            nov = MO_NOV[MO_NOV["fecha"].dt.normalize().isin(dias)] if not MO_NOV.empty else MO_NOV
+            nov_dia = {(r.nombre_norm, pd.Timestamp(r.fecha).normalize()): str(r.actDesc).replace("[NOVEDAD]", "").strip()
+                       for r in nov.itertuples()} if len(nov) else {}
+            hechos = pd.concat([reg[["nombre_norm", "fecha"]], nov[["nombre_norm", "fecha"]]]) if len(nov) else reg[["nombre_norm", "fecha"]]
+            hechos = hechos.groupby("nombre_norm")["fecha"].apply(lambda s: set(s.dt.normalize())).to_dict()
             horas_dia = reg.groupby(["nombre_norm", reg["fecha"].dt.normalize()])["horas"].sum().to_dict()
             etiquetas = {d: ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"][d.dayofweek] + f" {d.day}" for d in dias}
             filas = []
@@ -2480,7 +2501,7 @@ if not VISTA_GERENCIA:
                 fila = {"Estado": estado, "Persona": p_.Persona, "Cargo": str(p_.Cargo).replace("_", " ")}
                 for d in dias:
                     h = horas_dia.get((p_.nombre_norm, d))
-                    fila[etiquetas[d]] = f"{h:g} h" if h else "—"
+                    fila[etiquetas[d]] = f"{h:g} h" if h else nov_dia.get((p_.nombre_norm, d), "—")
                 fila["Días"] = f"{n}/{len(dias)}"
                 filas.append(fila)
             cob = pd.DataFrame(filas)
@@ -2495,7 +2516,9 @@ if not VISTA_GERENCIA:
                 k2.metric("🟡 Registro parcial", n_p)
                 k3.metric("🔴 Sin ningún registro", n_s)
                 st.caption(f"Personal de obra del Maestro de Personal (maestros, oficiales y ayudantes) · {len(dias)} día(s) hábil(es) "
-                           "ya cerrados, sin festivos. Cada casilla muestra las horas registradas ese día.")
+                           "ya cerrados, sin festivos. Cada casilla muestra las horas registradas ese día, o la novedad "
+                           "(incapacidad, permiso, no vino, vacaciones), que también cuenta como día registrado. "
+                           "No aparecen las personas de la pestaña Excluidos de Parametros_Alertas.")
                 filtro = st.multiselect("Mostrar", ["Sin registro", "Parcial", "Completo"], default=["Sin registro", "Parcial", "Completo"])
                 vista = cob[cob["Estado"].isin(filtro)]
                 colores = {"Sin registro": "background-color:#FDEBEA;color:#B4453A;font-weight:600",
@@ -2504,7 +2527,7 @@ if not VISTA_GERENCIA:
                 cols_dia = [etiquetas[d] for d in dias]
                 st.dataframe(
                     vista.style.map(lambda v: colores.get(v, ""), subset=["Estado"])
-                    .map(lambda v: "color:#B4453A" if v == "—" else "color:#1A5632", subset=cols_dia),
+                    .map(lambda v: "color:#B4453A" if v == "—" else ("color:#1A5632" if str(v).endswith(" h") else "color:#7A5E00;font-weight:600"), subset=cols_dia),
                     width='stretch', hide_index=True, height=min(38 * (len(vista) + 1), 900))
                 st.download_button("⬇️ Descargar cobertura (CSV)", cob.to_csv(index=False).encode("utf-8"),
                                    file_name=f"cobertura_{lunes:%Y-%m-%d}.csv", mime="text/csv")
