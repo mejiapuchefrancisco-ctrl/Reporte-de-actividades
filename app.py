@@ -418,6 +418,14 @@ def agregar_referencia(x):
 
 mo, inv, mov, tarifas = cargar_datos()
 med = cargar_mediciones()
+# App v4 (19-oct-2026): filas que no son horas trabajadas.
+#  - "[CANTIDAD SEMANAL] ...": cierre semanal de cantidades del maestro (0 h, cantidad en la columna cantidad).
+#  - "[NOVEDAD] ...": no vino, incapacidad, permiso o vacaciones (0 h). Solo cuentan como "registrado" en Cobertura.
+#  (La capacitación es "[NO PRESUPUESTADA] [NOVEDAD] ..." con horas reales y sí se queda en mo.)
+_desc_v4 = mo["actDesc"].astype(str)
+MO_CANT_SEMANAL = mo[_desc_v4.str.startswith("[CANTIDAD SEMANAL]")].copy()
+MO_NOV = mo[_desc_v4.str.startswith("[NOVEDAD]")].copy()
+mo = mo[~_desc_v4.str.startswith(("[CANTIDAD SEMANAL]", "[NOVEDAD]"))].copy()
 
 
 col_logo, col_titulo = st.columns([1, 6])
@@ -606,6 +614,7 @@ def mostrar_alertas(mo_base, tarifas):
         return
     RES = dict(zip(rs["Cód. frente"], rs["Residente(s)"].fillna("—")))
     d = mo_base.dropna(subset=["fecha"]).copy()
+    d = d[d["horas"].fillna(0) > 0]  # filas de 0 h no cuentan como día trabajado
     if d.empty:
         st.info("No hay registros para los frentes seleccionados.")
         return
@@ -2035,9 +2044,11 @@ if VISTA_GERENCIA:
         if not dias_periodo or roster_obra.empty:
             st.info("No hay suficientes datos en el periodo filtrado para calcular asistencia.")
         else:
+            _regs = mo_f.dropna(subset=["fecha"])[["nombre_norm", "fecha"]]
+            if not MO_NOV.empty:  # una novedad (no vino, incapacidad...) cuenta como día registrado
+                _regs = pd.concat([_regs, MO_NOV.dropna(subset=["fecha"])[["nombre_norm", "fecha"]]])
             registros_por_persona = (
-                mo_f.dropna(subset=["fecha"])
-                .groupby("nombre_norm")["fecha"]
+                _regs.groupby("nombre_norm")["fecha"]
                 .apply(lambda s: set(s.dt.date))
             )
 
