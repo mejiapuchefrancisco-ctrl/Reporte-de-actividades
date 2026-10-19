@@ -125,6 +125,8 @@ def cargar_app(_ma_hash, ma):
     except Exception:
         return None
     mo = mo.dropna(subset=["nombre"]).copy()
+    # App v4: cierres semanales de cantidades y novedades (0 h) no son horas trabajadas
+    mo = mo[~mo["actDesc"].astype(str).str.startswith(("[CANTIDAD SEMANAL]", "[NOVEDAD]"))].copy()
     if "codact" not in mo.columns and "codcat" in mo.columns:
         mo = mo.rename(columns={"codcat": "codact"})
     mo["fecha"] = pd.to_datetime(mo["fecha"], errors="coerce")
