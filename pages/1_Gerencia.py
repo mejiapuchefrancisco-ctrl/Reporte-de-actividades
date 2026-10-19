@@ -12,7 +12,11 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+import importlib
+
 import gerencia_datos as gd
+
+gd = importlib.reload(gd)  # siempre la versión más reciente subida a GitHub
 
 # ============ ENLACES (Google Drive, compartidos como "Cualquier persona con el enlace") ============
 URL_BD_NOMINA = "https://drive.google.com/uc?export=download&id=1OB3w9yq_u8opkAgMEkRhaafjh1Tp2mvT"      # BD_Nomina_MO
@@ -22,6 +26,9 @@ URL_TARIFAS = "https://drive.google.com/uc?export=download&id=1gUGj51qvXvmwZvyhh
 URL_HITOS = "https://drive.google.com/uc?export=download&id=1KmOde_OuHgE7aCE8p1B_wqkCffp5u-74"                                                  # cuadro.resumen.pagos.hitos
 URL_BASE = "https://drive.google.com/uc?export=download&id=1mCDMXj8M-mq9WlD218YRxPzC7ZB09ja2"                                              # Base_Tablero_Gerencia
 URL_APP = "https://docs.google.com/spreadsheets/d/1Sbt-r9yR_pcyluP_JLX9nA2nwxpW3cU2ATVPMwvNP-I/export?format=csv&gid=0"  # registros app
+# Exportes de SINCO tal como salen (.xls). Se reemplazan cada semana en Drive con "Administrar versiones" (el enlace no cambia).
+URL_SINCO_CONTRATOS = "https://drive.google.com/uc?export=download&id=1GFY0KewZ1uyKkU5I9IK64dC06r1c21uo"   # SINCO > Informe contratos detallado
+URL_SINCO_ACTAS = "https://drive.google.com/uc?export=download&id=1MosjVLGeqceP2IIZIOMtv42S0kZT0MKp"       # SINCO > Detallado de actas
 RUTA_RECARGOS = "recargos.csv"
 RUTA_LOGO = "aia.png"
 ZONA = ZoneInfo("America/Bogota")
@@ -95,6 +102,17 @@ def cargar_fuentes():
     except Exception:
         ma = None
     return n, aj, pa, mop, P, H, I, V, base, ma
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def cargar_sinco():
+    """Contratos y actas de SINCO para la pestaña Subcontratistas. Devuelve None si aún no están configurados."""
+    import os
+    if not (URL_SINCO_CONTRATOS or os.environ.get("GERENCIA_LOCAL_CONTRATOS")):
+        return None
+    Cs = gd.leer_contratos_sinco(gd.descargar(URL_SINCO_CONTRATOS, "contratos", html_ok=True))
+    As = gd.leer_actas_sinco(gd.descargar(URL_SINCO_ACTAS, "actas", html_ok=True), Cs)
+    return Cs, As
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -244,7 +262,7 @@ for k, r in alerta.iterrows():
 st.markdown('<div class="g-cards">' + "".join(cards) + "</div>", unsafe_allow_html=True)
 
 # ============ PESTAÑAS ============
-t1, t2, t3, t4, t5 = st.tabs(["Proyecciones", "Gasto y avance", "Cobro", "Horas extra", "Actividades"])
+t1, t2, t3, t4, t5, t6 = st.tabs(["Proyecciones", "Gasto y avance", "Cobro", "Horas extra", "Actividades", "Subcontratistas"])
 
 with t1:
     oa = o["oa"]
@@ -438,3 +456,84 @@ with t5:
                                 "Referencia: APU o SINCO (M)": st.column_config.NumberColumn(format="%.1f", width="small"),
                                 "Código": st.column_config.TextColumn(width="small"), "Actividad": st.column_config.TextColumn(width="large")})
     st.markdown('<p class="g-note">Nómina por encima del APU: la nómina propia ya superó toda la mano de obra de oficiales y ayudantes del APU. Contratado por encima de SINCO: contratos de MO + otros contratos del ítem + nómina propia, menos lo que SINCO proyectó.</p>', unsafe_allow_html=True)
+
+
+with t6:
+    try:
+        sinco = cargar_sinco()
+    except Exception as e:
+        sinco = None
+        st.error(f"No se pudieron leer los exportes de SINCO: {e}")
+    if sinco is None:
+        st.info("Para ver esta pestaña, suba a Drive los dos exportes de SINCO (Informe contratos detallado y Detallado de actas) "
+                "compartidos con 'Cualquier persona con el enlace', y ponga sus enlaces en URL_SINCO_CONTRATOS y URL_SINCO_ACTAS.")
+    else:
+        Cs, As = sinco
+        sb = gd.subcontratistas(Cs, As, mop, o["items"], P, hoy=hoy)
+        k = sb["kpi"]
+        nom_fr = lambda c: F.frente.get(c, {"18": "18 - Transportes internos", "19": "19 - No presupuestadas", "TODOS": "Transversales"}.get(c, c))
+        st.markdown(f'<p class="g-lead">Hay {M(k["contratado"], 0)} contratados con {k["n_contratos"]} contratos en ítems de obra y se han pagado {M(k["pagado"], 0)} '
+                    f'({PCT(k["pagado"] / k["contratado"] if k["contratado"] else np.nan)}). {k["n_sobre"]} ítems ya están contratados por encima de su proyección SINCO, '
+                    f'por {M(k["sobre"], 0)}: es costo comprometido que aún se puede negociar antes de pagar. '
+                    f'Además, {M(k["sin_cobrar"], 0)} pagados superan lo que ya se cobró de esos ítems.</p>'.replace("%", " %"), unsafe_allow_html=True)
+        kp = [("Contratado en ítems de obra", M(k["contratado"], 0), f"Proyección SINCO de esos ítems: {M(k['proy_contratado'], 0)}", ""),
+              ("Pagado en actas", M(k["pagado"], 0), f"Última acta: {fecha_txt(k['ult_acta'])}" if pd.notna(k["ult_acta"]) else "", ""),
+              ("Pendiente por pagar", M(k["pendiente"], 0), "Contratado menos pagado", ""),
+              ("Contratado sobre la proyección", M(k["sobre"], 0), f"{k['n_sobre']} ítems", "rojo" if k["sobre"] >= par["rojo_valor"] else "ambar"),
+              ("Pagado por encima de lo cobrado", M(k["sin_cobrar"], 0), "Contrato × % cobrado del ítem", "rojo" if k["sin_cobrar"] >= par["rojo_pagado_sin_cobrar"] else "ambar"),
+              ("Contratos indirectos", M(k["ind_contratado"], 0), f"Pagado {M(k['ind_pagado'], 0)} (gastos generales y otros)", "")]
+        st.markdown('<div class="g-kpis">' + "".join(f'<div class="g-kpi {c}"><div class="l">{l}</div><div class="v">{v}</div><div class="s">{s_}</div></div>' for l, v, s_, c in kp) + "</div>", unsafe_allow_html=True)
+
+        c1, c2 = st.columns([1.15, 1])
+        with c1:
+            tm = sb["mensual"]
+            tm = tm[(tm.pagado > 0) | (tm.ejecutado_acum > 0)]
+            st.markdown("**Pagos a contratistas por mes y lo que falta por pagar de lo ya ejecutado** · millones")
+            xm = [gd.MES_CORTO[p_.month] for p_ in tm.index]
+            fig = go.Figure()
+            fig.add_bar(x=xm, y=tm.pagado / 1e6, name="Pagado en el mes", marker_color=C["verde"])
+            fig.add_scatter(x=xm, y=tm.pagado_acum / 1e6, name="Pagado acumulado", mode="lines+markers", line=dict(color=C["verde_osc"], width=2))
+            fig.add_scatter(x=xm, y=tm.ejecutado_acum / 1e6, name="Contratado ya ejecutado (curva S)", mode="lines+markers", line=dict(color=C["dorado"], width=2, dash="dash"))
+            st.plotly_chart(layout(fig), use_container_width=True)
+            st.markdown(f'<p class="g-note">Contratado ya ejecutado = contratado de cada ítem × avance de su frente en la curva S. La distancia entre las dos líneas '
+                        f'({M(tm.pendiente_estimado.iloc[-1], 0)} hoy) es obra hecha que los contratistas aún no han cobrado: va a llegar en sus próximos cortes.</p>', unsafe_allow_html=True)
+        with c2:
+            fr_ = sb["frentes"].copy()
+            fr_ = fr_[fr_.contratado > 0].sort_values("contratado", ascending=False)
+            st.markdown("**Por frente** · millones")
+            html = '<table class="g-t"><tr><th>Frente</th><th>Contratado</th><th>Pagado</th><th>Sobre proyección</th><th>Pagado sin cobrar</th></tr>'
+            for kf, r in fr_.iterrows():
+                col = C["rojo"] if r.sobre >= par["rojo_valor"] else (C["ambar"] if r.sobre >= par["amarillo_valor"] else C["tinta"])
+                html += (f'<tr><td>{nom_fr(kf)}</td><td class="n">{M(r.contratado, 0)}</td><td class="n">{M(r.pagado, 0)}</td>'
+                         f'<td class="n" style="color:{col};font-weight:700">{M(r.sobre)}</td><td class="n">{M(r.sin_cobrar)}</td></tr>')
+            st.markdown(html + "</table>", unsafe_allow_html=True)
+
+        st.markdown("**Por contratista** · millones")
+        cc = sb["contratistas"]
+        cc = cc[cc.contratado >= 5e6]
+        vista = pd.DataFrame({"Contratista": cc.index.str[:45], "Contratos": cc.contratos, "Contratado (M)": cc.contratado / 1e6, "Pagado (M)": cc.pagado / 1e6,
+                              "% pagado": cc.pct_pagado * 100, "Sobre proyección (M)": cc.sobre / 1e6, "Pagado sin cobrar (M)": cc.sin_cobrar / 1e6,
+                              "Última acta": cc.ult_acta.dt.strftime("%d-%m-%Y").fillna("—")})
+        st.dataframe(vista, hide_index=True, use_container_width=True, height=360,
+                     column_config={"Contratado (M)": st.column_config.NumberColumn(format="%.1f"), "Pagado (M)": st.column_config.NumberColumn(format="%.1f"),
+                                    "% pagado": st.column_config.ProgressColumn(format="%.0f %%", min_value=0, max_value=100),
+                                    "Sobre proyección (M)": st.column_config.NumberColumn(format="%.1f"), "Pagado sin cobrar (M)": st.column_config.NumberColumn(format="%.1f")})
+
+        st.markdown("**Ítems contratados por encima de su proyección SINCO** · ordenados por valor")
+        itx = sb["items"]
+        itx = itx[itx.sobre > 0].sort_values("sobre", ascending=False)
+        lect = np.where(itx.pagado <= 0, "Nada pagado: renegociar o tramitar mayor valor antes del primer pago",
+                        np.where(itx.pc >= 0.99, "Ya cobrado: confirmar si hay mayor cantidad para cobrar", "Revisar cantidades antes de pagar el saldo"))
+        vista = pd.DataFrame({"Sobre (M)": itx.sobre / 1e6, "Frente": itx.fr.map(nom_fr), "Proyectado SINCO (M)": itx.proyectado / 1e6,
+                              "Contratado (M)": itx.contratado / 1e6, "Pagado (M)": itx.pagado / 1e6, "% cobrado": itx.pc, "Contratista": itx.contratistas,
+                              "Qué hacer": lect, "Código": itx.index, "Actividad": itx.desc.astype(str).str[:100].str.capitalize()})
+        st.dataframe(vista, hide_index=True, use_container_width=True, height=480,
+                     column_config={"Sobre (M)": st.column_config.NumberColumn(format="%.1f", width="small"),
+                                    "Proyectado SINCO (M)": st.column_config.NumberColumn(format="%.1f", width="small"),
+                                    "Contratado (M)": st.column_config.NumberColumn(format="%.1f", width="small"),
+                                    "Pagado (M)": st.column_config.NumberColumn(format="%.1f", width="small"),
+                                    "% cobrado": st.column_config.NumberColumn(format="percent", width="small"),
+                                    "Qué hacer": st.column_config.TextColumn(width="large"), "Actividad": st.column_config.TextColumn(width="large")})
+        st.markdown('<p class="g-note">Contratado y pagado antes de IVA, con los exportes de SINCO (informe de contratos y detallado de actas). '
+                    'Proyección SINCO por ítem: hoja MO_proyectada de Parametros_Alertas. Sobre la proyección = contratado del ítem menos todo su costo proyectado; '
+                    'puede ser mayor cantidad (cobrable a AIRPLAN) o mayor precio (a negociar). Pagado sin cobrar = pagado menos (contratado × % cobrado del ítem).</p>', unsafe_allow_html=True)
