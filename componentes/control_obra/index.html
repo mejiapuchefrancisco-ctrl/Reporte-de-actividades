@@ -1,0 +1,1329 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control de obra · AIRPLAN T1 JMC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<style>
+/* Línea visual: verde AIA, fondo gris claro, tarjetas blancas; ámbar y rojo solo para estado. */
+:root {
+  --verde: #1A5632; --verde-osc: #123D24; --verde-claro: #CFE5D5; --verde-suave: #EEF5F0; --menta: #7FB08A;
+  --ambar: #C98A12; --ambar-txt: #7A4D00; --ambar-claro: #FBEFD3; --ambar-celda: #F7DFA6;
+  --rojo: #B3261E; --rojo-txt: #8C1D17; --rojo-claro: #FBE4E1; --rojo-celda: #F6C8C2;
+  --gris-azul: #A9BBC6; --gris: #7E8D86;
+  --fondo: #F3F4F0; --panel: #FFFFFF; --tinta: #16201A; --tinta-2: #3E4A42; --muted: #5B665E; --linea: #DDE2DA; --linea-2: #EDF0EA;
+  --f-display: Archivo, 'Source Sans 3', system-ui, sans-serif; --f-body: 'Source Sans 3', system-ui, sans-serif;
+  /* nombres que usan los cálculos y gráficas heredados del prototipo */
+  --color-fg: var(--tinta); --color-fg-muted: var(--muted); --color-bg: var(--fondo); --color-panel: var(--panel); --color-border-line: var(--linea);
+  --color-ok: var(--verde); --color-warn: var(--ambar-txt); --color-bad: var(--rojo);
+  --cds-chart-grid: var(--linea-2); --cds-chart-axis: var(--linea); --cds-chart-muted: #C9D3CB; --cds-chart-reference: #9AA7A0; --cds-chart-status-critical: var(--rojo);
+  --cds-surface-popover: #FFFFFF; --cds-border: var(--linea); --cds-shadow-popover: 0 6px 24px rgba(22, 32, 26, .14); --cds-text-secondary: var(--muted);
+  --cds-radius: 12px; --cds-font-size-caption: 13px;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--fondo); }
+body { font-family: var(--f-body); color: var(--tinta); font-size: 15px; }
+button, select, input { font: inherit; }
+.top { background: var(--verde-osc); color: #fff; }
+.top .in { max-width: 1400px; margin: 0 auto; padding: 14px 24px; display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; justify-content: space-between; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand .logo { width: 40px; height: 40px; border-radius: 10px; background: #fff; color: var(--verde-osc); display: flex; align-items: center; justify-content: center; font: 800 15px var(--f-display); }
+.brand b { display: block; font: 700 18px var(--f-display); }
+.brand span { font-size: 13px; color: #B9D3C1; }
+.nav { display: flex; background: #0D2E1B; border-radius: 999px; padding: 4px; }
+.nav button { border: 0; background: transparent; color: #D7E6DC; padding: 10px 20px; border-radius: 999px; font-weight: 600; cursor: pointer; min-height: 44px; }
+.nav button[aria-selected="true"] { background: #fff; color: var(--verde-osc); font-weight: 700; }
+.estado { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; }
+.estado span { padding: 6px 12px; border-radius: 999px; background: #1D4D30; color: #D7E6DC; }
+.wrap { max-width: 1400px; margin: 0 auto; padding: 20px 24px 40px; display: flex; flex-direction: column; gap: 22px; }
+.sec { display: flex; flex-direction: column; gap: 22px; }
+.card { background: var(--panel); border: 1px solid var(--linea); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.card h2, .h2 { margin: 0; font: 700 20px var(--f-display); }
+.card .sub { font-size: 14px; color: var(--muted); margin: 0; }
+.head-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: baseline; }
+.row { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.row > .grow { flex: 999 1 620px; min-width: 0; }
+.row > .side { flex: 1 1 340px; min-width: 0; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 20px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 20px; }
+.muted { color: var(--muted); font-size: 13px; }
+.note { font-size: 13px; color: var(--muted); line-height: 1.45; margin: 0; }
+.eyebrow { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
+h1.lead { margin: 0; font: 700 32px/1.15 var(--f-display); letter-spacing: -.01em; max-width: 1050px; text-wrap: balance; }
+.sublead { margin: 0; color: var(--muted); font-size: 16px; }
+/* filtros */
+.filtros { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; background: var(--panel); border: 1px solid var(--linea); border-radius: 16px; padding: 12px 14px; }
+.pager { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.semana-sel { min-width: 0; }
+.ibtn { width: 44px; height: 44px; border-radius: 10px; border: 1px solid var(--linea); background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--tinta); }
+.ibtn:disabled { opacity: .35; cursor: default; }
+.semana-sel { display: flex; flex-direction: column; padding: 0 6px; }
+.semana-sel small { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.semana-sel select { border: 0; background: transparent; font: 700 20px var(--f-display); color: var(--tinta); padding: 0; cursor: pointer; max-width: 100%; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { min-width: 52px; min-height: 44px; padding: 4px 10px; border-radius: 10px; border: 1px solid var(--linea); background: #fff; color: var(--tinta); font-weight: 600; font-size: 13px; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; }
+.chip small { color: var(--muted); font-weight: 500; }
+.chip[aria-pressed="true"] { background: var(--verde); border-color: var(--verde); color: #fff; }
+.chip[aria-pressed="true"] small { color: #CFE5D5; }
+.chip:disabled { opacity: .4; cursor: default; }
+label.sel { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
+label.sel select, .search { min-height: 44px; border-radius: 10px; border: 1px solid var(--linea); padding: 0 12px; font-weight: 500; color: var(--tinta); background: #fff; min-width: 210px; max-width: 100%; }
+.search { border-radius: 999px; }
+button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible, tr.clic:focus-visible { outline: 2px solid var(--verde); outline-offset: 2px; }
+/* KPI */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.kpi { background: var(--panel); border: 1px solid var(--linea); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; border-top: 4px solid var(--gris); min-width: 0; }
+.kpi.ok { border-top-color: var(--verde); } .kpi.warn { border-top-color: var(--ambar); } .kpi.bad { border-top-color: var(--rojo); }
+.kpi .l { font-size: 13px; color: var(--muted); font-weight: 600; }
+.kpi .v { font: 700 32px/1 var(--f-display); font-variant-numeric: tabular-nums; }
+.kpi .v small { font: 600 15px var(--f-body); color: var(--muted); margin-left: 4px; }
+.kpi .s { font-size: 13px; font-weight: 600; color: var(--tinta-2); }
+.kpi.ok .s.tono { color: var(--verde); } .kpi.warn .s.tono { color: var(--ambar-txt); } .kpi.bad .s.tono { color: var(--rojo); }
+.spark { display: flex; align-items: flex-end; gap: 3px; height: 28px; }
+.spark i { flex: 1; border-radius: 3px; display: block; background: #C9D3CB; }
+.spark i.on { background: var(--verde); }
+/* hoy */
+.hoy-top { display: flex; align-items: center; gap: 18px; }
+.hoy-top b { display: block; font: 700 22px var(--f-display); }
+.mlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mlist li { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.mlist .ic { width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex: none; }
+.ic.ok { background: var(--verde-claro); color: var(--verde-osc); } .ic.bad { background: var(--rojo-claro); color: var(--rojo-txt); }
+.mlist .nm { flex: 1; min-width: 0; }
+.mlist .ct { font-variant-numeric: tabular-nums; font-weight: 700; }
+.minibar { width: 64px; height: 8px; border-radius: 999px; background: var(--linea-2); overflow: hidden; display: inline-block; flex: none; }
+.minibar i { display: block; height: 100%; }
+/* tablas */
+.scroll { overflow: auto; max-height: 34rem; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; padding: 8px; border-bottom: 1px solid var(--linea); position: sticky; top: 0; background: var(--panel); white-space: nowrap; z-index: 1; }
+td { padding: 9px 8px; border-bottom: 1px solid var(--linea-2); vertical-align: top; }
+td.n, th.n { text-align: right; white-space: nowrap; }
+#tb-maestros td:first-child { min-width: 170px; }
+tr.clic { cursor: pointer; }
+tr.clic:hover td { background: #F7F9F6; }
+tr.sel td { background: var(--verde-suave); }
+.pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.pill.Rojo, .pill.alta { background: var(--rojo-claro); color: var(--rojo-txt); }
+.pill.Amarillo, .pill.media { background: var(--ambar-claro); color: var(--ambar-txt); }
+.pill.Verde, .pill.baja { background: var(--verde-claro); color: var(--verde-osc); }
+.pill.info, .pill.Sin { background: var(--linea-2); color: var(--tinta-2); }
+/* matriz */
+.mz { border-collapse: separate; border-spacing: 0 4px; min-width: 900px; }
+.mz td { border: 0; padding: 2px; vertical-align: middle; }
+.mz td.nm { padding: 6px 8px; font-weight: 600; white-space: nowrap; }
+.mz td.ms { padding: 6px 8px; color: var(--muted); white-space: nowrap; }
+.cell { display: flex; align-items: center; justify-content: center; height: 34px; min-width: 52px; border-radius: 6px; font-weight: 600; font-size: 13px; }
+.cell.full { background: var(--verde-claro); color: var(--verde-osc); }
+.cell.over { background: var(--rojo-celda); color: #7A1A14; }
+.cell.nov { background: var(--ambar-celda); color: #5C3B00; font-size: 12px; }
+.cell.miss { background: var(--rojo); color: #fff; }
+.cell.none { background: var(--fondo); color: #9AA39C; }
+.cell.hoy { box-shadow: inset 0 0 0 2px var(--tinta); }
+.xbar { display: flex; align-items: center; gap: 8px; min-width: 140px; }
+.xbar span { flex: 1; height: 8px; background: var(--linea-2); border-radius: 999px; overflow: hidden; display: block; }
+.xbar i { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; flex: none; }
+/* barras de alertas / actividades */
+.tbar { display: flex; flex-direction: column; gap: 6px; }
+.tbar .t { display: flex; justify-content: space-between; font-size: 14px; }
+.tbar .t b { font-weight: 700; }
+.track { height: 10px; background: var(--linea-2); border-radius: 999px; overflow: hidden; display: flex; }
+.track i { display: block; height: 100%; }
+.stack { display: flex; height: 16px; border-radius: 999px; overflow: hidden; background: var(--linea-2); }
+.stack i { display: block; height: 100%; }
+.falta { display: flex; flex-direction: column; gap: 12px; }
+.falta .g { display: flex; flex-direction: column; gap: 6px; }
+.falta .g b { font-weight: 700; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { font-size: 13px; border: 1px solid var(--linea); border-radius: 999px; padding: 3px 10px; background: #fff; }
+.tag.bad { background: var(--rojo-claro); border-color: #F2C2BC; color: var(--rojo-txt); }
+.chk { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; }
+.chk.ok { background: var(--verde-suave); } .chk.bad { background: #FDF0EE; } .chk.na { background: var(--fondo); }
+.chk .dot { width: 28px; height: 28px; border-radius: 50%; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; flex: none; }
+.chk.ok .dot { background: var(--verde); } .chk.bad .dot { background: var(--rojo); } .chk.na .dot { background: var(--gris); }
+.chk .nm { flex: 1; font-weight: 600; font-size: 14px; min-width: 0; }
+.chk .dt { font-size: 13px; color: var(--tinta-2); }
+.det { font-size: 13px; }
+.det h3 { margin: 6px 0; font: 700 16px var(--f-display); }
+.vacio { color: var(--muted); font-size: 14px; padding: 6px 0; }
+.aviso { background: var(--ambar-claro); color: var(--ambar-txt); border-radius: 12px; padding: 12px 16px; font-weight: 600; }
+/* gerencia */
+.riesgo { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.rc { background: var(--panel); border: 1px solid var(--linea); border-radius: 18px; padding: 20px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.rc .t { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--tinta-2); }
+.rc .v { font: 700 36px/1 var(--f-display); font-variant-numeric: tabular-nums; }
+.rc .bar { height: 12px; border-radius: 999px; background: var(--linea-2); overflow: hidden; display: flex; }
+.rc .bar i { display: block; height: 100%; }
+.alerts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; }
+.al { background: var(--panel); border: 1px solid var(--linea); border-radius: 18px; padding: 20px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.al .hd { display: flex; align-items: center; gap: 10px; }
+.al .sig { width: 40px; height: 40px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; font: 800 14px var(--f-display); flex: none; }
+.al.alta .sig { background: var(--rojo-claro); color: var(--rojo-txt); } .al.media .sig { background: var(--ambar-claro); color: var(--ambar-txt); } .al.baja .sig { background: var(--verde-claro); color: var(--verde-osc); }
+.al .tema { flex: 1; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.al .cf { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.al .cf b { font: 700 30px var(--f-display); font-variant-numeric: tabular-nums; }
+.al.alta .cf b { color: var(--rojo); } .al.media .cf b { color: var(--ambar-txt); } .al.baja .cf b { color: var(--verde); }
+.al .cf span { font-size: 15px; font-weight: 600; }
+.al p { margin: 0; font-size: 14px; color: var(--tinta-2); line-height: 1.45; }
+.al .acc { margin-top: auto; padding: 10px 12px; border-radius: 12px; background: var(--fondo); font-size: 14px; line-height: 1.4; }
+.ftiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 12px; }
+.ft { text-align: left; border: 1px solid var(--linea); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 8px; background: #fff; cursor: pointer; color: var(--tinta); min-height: 44px; }
+.ft.Rojo { background: #FDF3F2; } .ft.Amarillo { background: #FEF9EE; } .ft.Verde { background: #F4F8F5; }
+.ft[aria-expanded="true"] { outline: 2px solid var(--tinta); }
+.ft .h { display: flex; align-items: center; gap: 8px; }
+.ft .h i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex: none; }
+.ft .h b { flex: 1; font-weight: 700; font-size: 15px; }
+.ft .h small { font-size: 12px; font-weight: 700; }
+.ft .bars { display: flex; flex-direction: column; gap: 4px; }
+.ft .bars span { height: 8px; border-radius: 999px; background: #E3E8E1; overflow: hidden; display: block; }
+.ft .bars i { display: block; height: 100%; }
+.ft .nt { font-size: 13px; color: var(--tinta-2); }
+.fdet { background: var(--fondo); border-radius: 14px; padding: 14px 16px; font-size: 14px; line-height: 1.5; display: flex; flex-direction: column; gap: 6px; }
+.fdet b { font-weight: 700; }
+.chart { position: relative; min-height: 220px; }
+.tt { position: absolute; pointer-events: none; background: #fff; border: 1px solid var(--linea); border-radius: 12px; box-shadow: var(--cds-shadow-popover); padding: 8px 10px; font-size: 13px; white-space: nowrap; z-index: 5; }
+.tt .h { color: var(--muted); }
+.fail { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); min-height: 120px; }
+.cargando { padding: 60px 24px; text-align: center; color: var(--muted); font-size: 16px; }
+@media (max-width: 640px) { .pager { width: 100%; } .semana-sel { flex: 1; } .semana-sel select { font-size: 17px; width: 100%; } label.sel { width: 100%; } label.sel select { flex: 1; min-width: 0; } h1.lead { font-size: 25px; } .top .in, .wrap { padding-left: 14px; padding-right: 14px; } .kpi .v { font-size: 27px; } }
+@media (prefers-reduced-motion: no-preference) { .kpi, .card, .al, .rc { transition: box-shadow .2s; } }
+</style>
+</head>
+<body>
+<div class="co">
+  <header class="top">
+    <div class="in">
+      <div class="brand"><div class="logo">AIA</div><div><b>Control de Obra</b><span>AIRPLAN T1 JMC · Mano de obra, equipos y subcontratos</span></div></div>
+      <nav class="nav" role="tablist" aria-label="Vista">
+        <button type="button" role="tab" id="tab-admin" aria-selected="true" aria-controls="admin">Control semanal</button>
+        <button type="button" role="tab" id="tab-gerencia" aria-selected="false" aria-controls="gerencia">Gerencia</button>
+      </nav>
+      <div class="estado" id="estado"></div>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <p class="cargando" id="cargando">Leyendo la app, la nómina, la curva S y SINCO…</p>
+
+    <!-- ===================== ADMINISTRADOR ===================== -->
+    <section id="admin" class="sec" role="tabpanel" aria-labelledby="tab-admin" hidden>
+      <div class="filtros">
+        <div class="pager">
+          <button type="button" class="ibtn" id="sem-prev" aria-label="Semana anterior"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg></button>
+          <label class="semana-sel" for="sel-semana"><small id="sem-eyebrow">Semana · lunes a domingo</small><select id="sel-semana"></select></label>
+          <button type="button" class="ibtn" id="sem-next" aria-label="Semana siguiente"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button>
+        </div>
+        <div class="chips" role="group" aria-label="Día" id="dias"></div>
+        <label class="sel" for="sel-maestro">Maestro<select id="sel-maestro"></select></label>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <h1 class="lead" id="lead">—</h1>
+        <p class="sublead" id="sublead"></p>
+      </div>
+
+      <div class="kpis" id="kpis"></div>
+
+      <div class="row">
+        <div class="card grow" id="card-historico">
+          <div class="head-row">
+            <h2>Costo semanal de mano de obra desde abril</h2>
+            <div class="legend">
+              <span><i class="sw" style="background:var(--gris-azul)"></i>Nómina SINCO repartida</span>
+              <span><i class="sw" style="background:var(--menta)"></i>App</span>
+              <span><i class="sw" style="background:var(--verde)"></i>Semana elegida</span>
+            </div>
+          </div>
+          <div class="chart" id="ch-historico" style="min-height:250px"></div>
+          <p class="note">Millones de pesos. Toque una barra para abrir esa semana; pase el cursor para ver los frentes.</p>
+        </div>
+        <div class="card side" id="card-hoy">
+          <div class="head-row"><h2 id="hoy-titulo">Hoy</h2><span class="muted">último día con registros</span></div>
+          <div class="hoy-top">
+            <svg width="112" height="112" viewBox="0 0 112 112" role="img" id="hoy-ring" aria-label="Personas registradas">
+              <circle cx="56" cy="56" r="46" fill="none" stroke="#EDF0EA" stroke-width="14"></circle>
+              <circle id="hoy-arc" cx="56" cy="56" r="46" fill="none" stroke="#1A5632" stroke-width="14" stroke-linecap="round" stroke-dasharray="0 289" transform="rotate(-90 56 56)"></circle>
+              <text id="hoy-n" x="56" y="55" text-anchor="middle" font-family="Archivo, sans-serif" font-weight="700" font-size="28" fill="#16201A">—</text>
+              <text id="hoy-de" x="56" y="75" text-anchor="middle" font-family="Source Sans 3, sans-serif" font-size="13" fill="#5B665E"></text>
+            </svg>
+            <div><b id="hoy-faltan">—</b><span class="muted" id="hoy-txt"></span></div>
+          </div>
+          <ul class="mlist" id="hoy-lista"></ul>
+        </div>
+      </div>
+
+      <p class="aviso" id="aviso-nomina" hidden>Semana anterior a la app: solo existe la nómina SINCO del mes repartida por días hábiles. No hay registro por persona ni por día.</p>
+
+      <div class="grid2" id="grid-registro">
+        <div class="card" id="card-faltan">
+          <h2 id="titulo-faltan">Falta registrar</h2>
+          <p class="sub">Personal sin ninguna fila (ni horas ni novedad) en días de lunes a sábado en que estaba activo, por maestro.</p>
+          <div class="falta" id="faltan"></div>
+        </div>
+        <div class="card" id="card-maestros">
+          <h2 id="titulo-maestros">Registro por maestro</h2>
+          <p class="sub">Cuadrilla habitual: quien más registró a cada persona en las últimas dos semanas.</p>
+          <div class="scroll"><table id="tb-maestros"><thead><tr><th>Maestro</th><th class="n">Personas</th><th class="n" id="th-m3">Días sin registro</th><th class="n">Horas</th><th class="n">Extra</th><th class="n">No ppto.</th><th>Último envío</th></tr></thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <div class="card" id="card-alertas">
+        <div class="head-row"><h2 id="titulo-alertas">Alertas de la semana</h2><span class="muted" id="alertas-total"></span></div>
+        <div class="grid2" style="gap:24px">
+          <div style="display:flex;flex-direction:column;gap:12px" id="alertas-tipos"></div>
+          <div style="display:flex;flex-direction:column;gap:8px"><span class="eyebrow" style="font-size:12px">Para revisar primero</span><div id="alertas-top" style="display:flex;flex-direction:column;gap:8px"></div></div>
+        </div>
+        <details>
+          <summary style="cursor:pointer;font-weight:600;min-height:32px">Ver todas las alertas</summary>
+          <div class="scroll" style="margin-top:8px"><table id="tb-alertas"><thead><tr><th>Nivel</th><th>Día</th><th>Persona</th><th>Maestro</th><th>Alerta</th><th>Detalle</th></tr></thead><tbody></tbody></table></div>
+        </details>
+      </div>
+
+      <div class="card" id="card-actividades">
+        <div class="head-row" style="align-items:end">
+          <div><h2 id="titulo-actividades">Qué se hizo en la semana</h2><p class="sub" id="act-sub"></p></div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+            <div class="chips" role="group" aria-label="Tipo de actividad" id="act-tipos"></div>
+            <input type="search" class="search" id="act-q" placeholder="Código, actividad o frente" aria-label="Buscar actividad">
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px"><div class="stack" id="act-stack" role="img" aria-label="Horas por tipo"></div><div class="legend" id="act-leyenda"></div></div>
+        <div class="scroll"><table id="tb-actividades"><thead><tr><th>Código</th><th>Actividad</th><th>Frente</th><th>Tipo</th><th class="n">Personas</th><th style="min-width:200px">Horas (extra)</th></tr></thead><tbody></tbody></table></div>
+      </div>
+
+      <div class="card" id="card-semana">
+        <div class="head-row">
+          <div><h2 id="titulo-semana">Quién trabajó cada día</h2><p class="sub">Horas por persona. Toque una fila para ver sus actividades.</p></div>
+          <div class="legend">
+            <span><i class="sw" style="background:var(--verde-claro)"></i>Jornada normal</span>
+            <span><i class="sw" style="background:var(--rojo-celda)"></i>Más de 12 h</span>
+            <span><i class="sw" style="background:var(--ambar-celda)"></i>Novedad</span>
+            <span><i class="sw" style="background:var(--rojo)"></i>Sin registro</span>
+          </div>
+        </div>
+        <div style="overflow-x:auto"><table class="mz" id="tb-semana"><thead><tr id="mz-head"></tr></thead><tbody></tbody></table></div>
+        <div class="det" id="detalle"></div>
+      </div>
+
+      <div class="grid3">
+        <div class="card" id="card-costo-frente"><div class="head-row"><h2 id="titulo-costo-frente">Costo por frente</h2><span class="muted">millones · semana</span></div><div class="chart" id="ch-costo-frente"></div></div>
+        <div class="card" id="card-tendencia"><h2>Extras y no presupuestadas</h2><p class="sub">Porcentaje de las horas de la app por semana, desde el 17-ago.</p><div class="chart" id="ch-semanas"></div></div>
+        <div class="card" id="card-cierres"><div class="head-row"><h2>Cierre de cantidades</h2><span class="muted" id="cierres-cuenta"></span></div><div id="cierres" style="display:flex;flex-direction:column;gap:8px"></div></div>
+      </div>
+      <p class="note">Fuentes: hoja Registros de la app (con las conciliaciones de planilla física) desde el inicio de la app y nómina SINCO antes, con el mismo reparto semanal del tablero. El costo de la app es estimado con la tarifa del Maestro de Personal y el recargo de cada tipo de hora; la nómina SINCO del mes es la que manda.</p>
+    </section>
+
+    <!-- ===================== GERENCIA ===================== -->
+    <section id="gerencia" class="sec" role="tabpanel" aria-labelledby="tab-gerencia" hidden>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span class="eyebrow" id="ger-eyebrow">Lo que hay que decidir</span>
+        <h1 class="lead" id="lead-ger">—</h1>
+        <span class="muted" style="font-size:14px">Todas las cifras en miles de pesos, costo directo sin AIU.</span>
+      </div>
+      <div class="riesgo" id="riesgo"></div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <h2 class="h2">Alertas para decidir</h2>
+        <div class="alerts" id="alertas-ger"></div>
+      </div>
+      <div class="card" id="card-frentes">
+        <div class="head-row">
+          <h2>Semáforo por frente</h2>
+          <div class="legend"><span><i class="sw" style="background:var(--verde)"></i>Ejecutado</span><span><i class="sw" style="background:var(--menta)"></i>Cobrado</span><span>Toque un frente para ver qué decidir</span></div>
+        </div>
+        <div class="ftiles" id="ftiles"></div>
+        <div class="fdet" id="fdet" hidden></div>
+      </div>
+      <div class="grid2">
+        <div class="card" id="card-cobro"><h2>Programado, ejecutado y cobrado</h2><p class="sub">Acumulado por semana. Curva S y cortes cobrados a AIRPLAN.</p><div class="chart" id="ch-cobro"></div></div>
+        <div class="card" id="card-mo"><h2>Nómina propia vs MO que paga el avance</h2><p class="sub">Oficiales y ayudantes en actividades, por mes. Arriba de cada mes: nómina ÷ ganada.</p><div class="chart" id="ch-mo"></div></div>
+        <div class="card" id="card-maestros-mes"><h2>Maestros: proyectado, real y tope</h2><p class="sub">Administración (A). La línea es el tope mensual para cerrar dentro del presupuesto.</p><div class="chart" id="ch-maestros"></div></div>
+        <div class="card" id="card-equipos"><h2>Equipos: facturado vs lo que reconoce el APU</h2><p class="sub">Facturado frente al componente de equipo del APU según lo ejecutado. A la derecha, facturado sobre ganado.</p><div id="equipos" style="display:flex;flex-direction:column;gap:10px"></div></div>
+      </div>
+      <div class="grid2">
+        <div class="card" id="card-act"><h2>Actividades con nómina por encima del APU</h2><p class="sub">Las de mayor exceso.</p><div class="scroll"><table id="tb-act"><thead><tr><th>Código</th><th>Actividad</th><th class="n">Nómina</th><th class="n">MO APU</th><th class="n">Exceso</th></tr></thead><tbody></tbody></table></div></div>
+        <div class="card" id="card-sub"><h2>Subcontratistas a revisar</h2><p class="sub">Por contratado sobre SINCO más pagado sin cobrar.</p><div class="scroll"><table id="tb-sub"><thead><tr><th>Subcontratista</th><th class="n">Contratado</th><th class="n">Pagado</th><th class="n">Sobre SINCO</th><th class="n">Sin cobrar</th></tr></thead><tbody></tbody></table></div></div>
+      </div>
+      <p class="note" id="nota-ger">Fuentes: nómina SINCO (BD_Nomina_MO) y el mes en curso estimado con la app; curva S; cuadro de hitos y cortes; SINCO contratos y actas; relación de pagos (anticipos); relaciones de equipos alquilados contra factura; APU del presupuesto de trabajo.</p>
+    </section>
+  </div>
+</div>
+
+<script>
+// ---------------- datos y conexión con Streamlit ----------------
+// La página recibe todos los conjuntos de datos desde Python (control_obra_datos.construir) y los
+// cálculos de abajo se hacen aquí en el navegador, igual que en el prototipo.
+(() => {
+  const DATA = {}, CALCS = {}, cache = {}, subs = [];
+  let params = { semana: null, dia: null, maestro: null };
+  let cargado = false;
+  const data = (id) => {
+    if (id in DATA) return { status: 'ok', data: DATA[id] };
+    if (id in CALCS) {
+      if (!cargado) return { status: 'loading', data: [] };
+      if (!(id in cache)) {
+        try { cache[id] = CALCS[id].fn(...CALCS[id].inputs.map((i) => data(i).data)); }
+        catch (e) { console.error('cálculo', id, e); cache[id] = null; }
+      }
+      return cache[id] == null ? { status: 'error', data: [] } : { status: 'ok', data: cache[id] };
+    }
+    return { status: cargado ? 'missing' : 'loading', data: [] };
+  };
+  const send = (type, extra) => { try { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra || {}), '*'); } catch (e) {} };
+  let ultimaAltura = 0;
+  const altura = () => {
+    const h = Math.ceil(document.body.scrollHeight) + 8;
+    if (Math.abs(h - ultimaAltura) > 2) { ultimaAltura = h; send('streamlit:setFrameHeight', { height: h }); }
+  };
+  const correr = () => { subs.forEach((fn) => { try { fn(); } catch (e) { console.error(e); } }); requestAnimationFrame(altura); };
+  window.dash = {
+    data, calc: (id, o) => { CALCS[id] = o; }, loader: () => {},
+    onData: (fn) => { subs.push(fn); try { fn(); } catch (e) { console.error(e); } },
+    params: () => ({ ...params }), setParams: (p) => { Object.assign(params, p); correr(); },
+    resetParams: () => { params = { semana: null, dia: null, maestro: null }; correr(); },
+    setLink: () => {}, refresh: () => {},
+    colors: ['#1A5632', '#C98A12', '#3D6E8C', '#8A5A9E', '#7FB08A', '#B3261E', '#6B7F8C', '#D08C60'],
+  };
+  window.CO_cargar = (d) => {
+    for (const k of Object.keys(cache)) delete cache[k];
+    for (const k of Object.keys(DATA)) delete DATA[k];
+    Object.assign(DATA, d); cargado = true;
+    const c = document.getElementById('cargando'); if (c) c.hidden = true;
+    window.CO_mostrar && window.CO_mostrar();
+    correr();
+  };
+  window.CO_altura = () => requestAnimationFrame(altura);
+  let ultimo = null;
+  window.addEventListener('message', (ev) => {
+    const m = ev.data;
+    if (!m || m.type !== 'streamlit:render') return;
+    const a = m.args || {};
+    if (a.data_json && a.data_json !== ultimo) { ultimo = a.data_json; window.CO_cargar(JSON.parse(a.data_json)); }
+    else requestAnimationFrame(altura);
+  });
+  let t = null;
+  window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(correr, 150); });
+  try { new ResizeObserver(() => requestAnimationFrame(altura)).observe(document.body); } catch (e) {}
+  // Vista previa fuera de Streamlit: datos incrustados en <script id="co-data" type="application/json">
+  document.addEventListener('DOMContentLoaded', () => {
+    send('streamlit:componentReady', { apiVersion: 1 });
+    const el = document.getElementById('co-data');
+    if (el && el.textContent.trim()) window.CO_cargar(JSON.parse(el.textContent));
+  });
+})();
+</script>
+
+<script>
+// ---------------- utilidades compartidas ----------------
+window.CO = (() => {
+  const nf1 = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+  const nf0 = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 });
+  const M = (v) => (v == null || isNaN(v)) ? '—' : (v < 0 ? '−' : '') + nf1.format(Math.abs(v)) + ' M';
+  const MS = (v) => (v == null || isNaN(v)) ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + nf1.format(Math.abs(v)) + ' M';
+  const P = (v) => (v == null || isNaN(v)) ? '—' : nf0.format(v * 100) + ' %';
+  const H = (v) => (v == null || isNaN(v)) ? '—' : new Intl.NumberFormat('es-CO', { maximumFractionDigits: 1 }).format(v);
+  const N = (v) => (v == null || isNaN(v)) ? '—' : nf0.format(v);
+  const nk = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 });
+  const K = (v) => (v == null || isNaN(v)) ? '—' : (v < 0 ? '−$\u00a0' : '$\u00a0') + nk.format(Math.abs(Math.round(v * 1000)));
+  const KS = (v) => (v == null || isNaN(v)) ? '—' : (v > 0 ? '+$\u00a0' : v < 0 ? '−$\u00a0' : '$\u00a0') + nk.format(Math.abs(Math.round(v * 1000)));
+  const pesosM = (v) => (v == null || isNaN(v)) ? '—' : '$\u00a0' + nf1.format(v / 1e6) + '\u00a0M';
+  const DIAS = ['dom', 'lun', 'mar', 'mie', 'jue', 'vie', 'sab'];
+  const DNOM = { dom: 'domingo', lun: 'lunes', mar: 'martes', mie: 'miércoles', jue: 'jueves', vie: 'viernes', sab: 'sábado' };
+  const MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  const dow = (s) => new Date(s + 'T12:00:00Z').getUTCDay();
+  const lunes = (s) => { const d = new Date(s + 'T12:00:00Z'); const k = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - k); return d.toISOString().slice(0, 10); };
+  const addD = (s, n) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const fecha = (s, largo) => { const d = new Date(s + 'T12:00:00Z'); const t = d.getUTCDate() + ' ' + MES[d.getUTCMonth()]; return largo ? DNOM[DIAS[d.getUTCDay()]] + ' ' + t : t; };
+  const mesN = (s) => { const [y, m] = s.split('-'); return MES[+m - 1] + ' ' + y.slice(2); };
+  const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+  const ok = (...ids) => ids.every((i) => dash.data(i).status === 'ok');
+  const failed = (...ids) => ids.some((i) => ['error', 'connect', 'declined', 'missing'].includes(dash.data(i).status));
+  const fail = (box) => { box.replaceChildren(el('div', 'fail', 'Failed to load')); };
+  const tip = (box) => { let t = box.querySelector('.tt'); if (!t) { t = el('div', 'tt'); t.hidden = true; box.appendChild(t); } return t; };
+  const showTip = (box, t, ev, lines) => {
+    t.replaceChildren(...lines.map((l, i) => { const d = el('div', i === 0 ? 'h' : ''); if (l.c) { const s = el('i', 'sw'); s.style.background = l.c; s.style.marginRight = '6px'; d.appendChild(s); } d.appendChild(document.createTextNode(l.t)); return d; }));
+    t.hidden = false; const r = box.getBoundingClientRect(); let x = ev.clientX - r.left + 12, y = ev.clientY - r.top - 10;
+    const w = t.offsetWidth; if (x + w > r.width) x = Math.max(0, ev.clientX - r.left - w - 12); t.style.left = x + 'px'; t.style.top = Math.max(0, y) + 'px';
+  };
+  const axisClean = (g) => { g.attr('font-size', null).attr('font-family', null); g.selectAll('text').attr('fill', 'var(--color-fg-muted)').style('font-size', 'var(--cds-font-size-caption)'); g.selectAll('line,path').attr('stroke', 'var(--cds-chart-axis)'); };
+  const state = { vista: 'admin', sel: null };
+  return { M, MS, K, KS, P, H, N, pesosM, DIAS, dow, lunes, addD, fecha, mesN, el, ok, failed, fail, tip, showTip, axisClean, state };
+})();
+</script>
+<script>
+// ---------------- cálculos (administrador) ----------------
+// Una persona se espera en un día (lunes a sábado) si ese día está entre su primer y su último registro;
+// si su último registro es de los últimos 7 días, se sigue esperando hasta hoy.
+dash.calc('resumen_dia', {
+  title: 'Resumen del día',
+  description: 'Por fecha: personal activo esperado, con registro, con novedad y sin registro; horas, extras y no presupuestadas.',
+  inputs: ['registro_diario', 'personal'],
+  fn: (registro_diario, personal) => {
+    const rango = new Map();
+    for (const r of registro_diario) { const o = rango.get(r.id) || [r.fecha, r.fecha]; if (r.fecha < o[0]) o[0] = r.fecha; if (r.fecha > o[1]) o[1] = r.fecha; rango.set(r.id, o); }
+    const fechas = [...new Set(registro_diario.map((r) => r.fecha))].sort();
+    const fmax = fechas[fechas.length - 1];
+    const lim = new Date(fmax + 'T12:00:00Z'); lim.setUTCDate(lim.getUTCDate() - 7); const reciente = lim.toISOString().slice(0, 10);
+    const activo = (id, f) => { const o = rango.get(id); return !!o && o[0] <= f && (f <= o[1] || o[1] >= reciente); };
+    const porDia = new Map();
+    for (const r of registro_diario) { if (!porDia.has(r.fecha)) porDia.set(r.fecha, []); porDia.get(r.fecha).push(r); }
+    return fechas.map((f) => {
+      const rows = porDia.get(f);
+      const domingo = new Date(f + 'T12:00:00Z').getUTCDay() === 0;
+      const conH = new Set(rows.filter((r) => r.horas > 0).map((r) => r.id));
+      const conNov = new Set(rows.filter((r) => !(r.horas > 0) && r.novedad).map((r) => r.id));
+      const esperadas = personal.filter((p) => activo(p.id, f)).length;
+      const sin = personal.filter((p) => activo(p.id, f) && !conH.has(p.id) && !conNov.has(p.id)).length;
+      const horas = rows.reduce((s, r) => s + r.horas, 0);
+      const extras = rows.reduce((s, r) => s + r.extras, 0);
+      const np = rows.reduce((s, r) => s + r.no_presupuestadas, 0);
+      const maestros = new Set(rows.filter((r) => !r.conciliado).flatMap((r) => r.registrado_por.split(' / ')).filter((m) => !/^(Conciliaci|Ajuste)/i.test(m)));
+      return { fecha: f, esperadas, con_registro: conH.size, con_novedad: conNov.size, sin_registro: domingo ? null : sin,
+        horas: Math.round(horas * 10) / 10, extras: Math.round(extras * 10) / 10, pct_extra: horas ? extras / horas : null,
+        no_presupuestadas: Math.round(np * 10) / 10, pct_np: horas ? np / horas : null, maestros_envio: maestros.size,
+        ultimo_envio: rows.map((r) => r.enviado).sort().slice(-1)[0] || null };
+    });
+  },
+});
+dash.calc('costo_dia', {
+  title: 'Costo estimado del día',
+  description: 'Suma por fecha del costo estimado de MO (horas × tarifa × recargo), total y de maestros.',
+  inputs: ['costo_dia_frente'],
+  fn: (costo_dia_frente) => {
+    const m = new Map();
+    for (const r of costo_dia_frente) {
+      const o = m.get(r.fecha) || { fecha: r.fecha, costo: 0, costo_maestros: 0 };
+      o.costo += r.costo; if (r.grupo === 'Maestro') o.costo_maestros += r.costo; m.set(r.fecha, o);
+    }
+    return [...m.values()].sort((a, b) => a.fecha < b.fecha ? -1 : 1);
+  },
+});
+dash.calc('pendientes_dia', {
+  title: 'Falta registrar',
+  description: 'Personal activo sin ninguna fila (horas o novedad) en cada día de lunes a sábado con registros.',
+  inputs: ['registro_diario', 'personal'],
+  fn: (registro_diario, personal) => {
+    const rango = new Map();
+    for (const r of registro_diario) { const o = rango.get(r.id) || [r.fecha, r.fecha]; if (r.fecha < o[0]) o[0] = r.fecha; if (r.fecha > o[1]) o[1] = r.fecha; rango.set(r.id, o); }
+    const fechas = [...new Set(registro_diario.map((r) => r.fecha))].sort();
+    const fmax = fechas[fechas.length - 1];
+    const lim = new Date(fmax + 'T12:00:00Z'); lim.setUTCDate(lim.getUTCDate() - 7); const reciente = lim.toISOString().slice(0, 10);
+    const activo = (id, f) => { const o = rango.get(id); return !!o && o[0] <= f && (f <= o[1] || o[1] >= reciente); };
+    const tiene = new Set(registro_diario.map((r) => r.id + '|' + r.fecha));
+    const out = [];
+    for (const f of fechas.filter((f) => new Date(f + 'T12:00:00Z').getUTCDay() !== 0)) for (const p of personal) {
+      if (activo(p.id, f) && !tiene.has(p.id + '|' + f)) out.push({ clave: f + '|' + p.id, fecha: f, id: p.id, nombre: p.nombre, maestro: p.maestro, cargo: p.cargo });
+    }
+    return out;
+  },
+});
+dash.calc('alertas_dia', {
+  title: 'Alertas por persona y día',
+  description: 'Reglas por persona y día: más de 2 h extra, más de 12 h, horas nocturnas, supervisión en oficial o ayudante, todo en no presupuestadas, dos maestros.',
+  inputs: ['registro_diario', 'personal'],
+  fn: (registro_diario, personal) => {
+    const P = new Map(personal.map((p) => [p.id, p]));
+    const fmt = (v) => String(Math.round(v * 10) / 10).replace('.', ',');
+    const out = [];
+    const add = (r, tipo, detalle, nivel) => { const p = P.get(r.id) || {}; out.push({ clave: r.fecha + '|' + r.id + '|' + tipo, fecha: r.fecha, id: r.id, nombre: p.nombre || r.id, maestro: p.maestro || '', tipo, detalle, nivel }); };
+    for (const r of registro_diario) {
+      if (!(r.horas > 0)) continue;
+      const p = P.get(r.id) || {};
+      if (r.horas > 12) add(r, 'Jornada larga', `${fmt(r.horas)} h en el día`, 'alta');
+      else if (r.extras > 2.01) add(r, 'Más de 2 h extra', `${fmt(r.extras)} h extra (máximo legal 2 h al día)`, 'media');
+      if (r.nocturnas > 0) add(r, 'Horas nocturnas', `${fmt(r.nocturnas)} h con recargo nocturno`, 'info');
+      if (r.supervision > 0 && p.grupo !== 'Maestro') add(r, 'Supervisión en ' + (p.grupo || '').toLowerCase(), `${fmt(r.supervision)} h con código SUP`, 'media');
+      if (r.no_presupuestadas >= r.horas - 0.01 && r.horas >= 8) add(r, 'Todo el día no presupuestado', `${fmt(r.horas)} h en códigos NP`, 'media');
+      const regs = r.registrado_por.split(' / ').filter((m) => !/^(Conciliaci|Ajuste)/i.test(m));
+      if (regs.length > 1) add(r, 'Registrado por dos maestros', regs.join(' y '), 'alta');
+    }
+    return out;
+  },
+});
+dash.calc('conteo_alertas', {
+  title: 'Alertas por día',
+  description: 'Cuántas alertas hay cada día y cuántas son de nivel alto (las informativas no cuentan).',
+  inputs: ['alertas_dia'],
+  fn: (alertas_dia) => {
+    const m = new Map();
+    for (const a of alertas_dia) { const o = m.get(a.fecha) || { fecha: a.fecha, alertas: 0, altas: 0 }; if (a.nivel !== 'info') o.alertas++; if (a.nivel === 'alta') o.altas++; m.set(a.fecha, o); }
+    return [...m.values()];
+  },
+});
+dash.calc('semana_persona', {
+  title: 'Semana por persona',
+  description: 'Por semana (lunes) y persona: horas de cada día, total, extras y estado del registro en los días de lunes a sábado en que estaba activa.',
+  inputs: ['registro_diario', 'personal'],
+  fn: (registro_diario, personal) => {
+    const K = ['lun', 'mar', 'mie', 'jue', 'vie', 'sab', 'dom'];
+    const rango = new Map();
+    for (const r of registro_diario) { const o = rango.get(r.id) || [r.fecha, r.fecha]; if (r.fecha < o[0]) o[0] = r.fecha; if (r.fecha > o[1]) o[1] = r.fecha; rango.set(r.id, o); }
+    const fechas = [...new Set(registro_diario.map((r) => r.fecha))].sort();
+    const fmax = fechas[fechas.length - 1];
+    const lim = new Date(fmax + 'T12:00:00Z'); lim.setUTCDate(lim.getUTCDate() - 7); const reciente = lim.toISOString().slice(0, 10);
+    const activo = (id, f) => { const o = rango.get(id); return !!o && o[0] <= f && (f <= o[1] || o[1] >= reciente); };
+    const lun = (s) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - (d.getUTCDay() + 6) % 7); return d.toISOString().slice(0, 10); };
+    const conDatos = new Set(fechas);
+    const R = new Map(registro_diario.map((r) => [r.id + '|' + r.fecha, r]));
+    const out = [];
+    for (const s of [...new Set(fechas.map(lun))]) for (const p of personal) {
+      const o = { clave: s + '|' + p.id, lunes: s, id: p.id, nombre: p.nombre, maestro: p.maestro, grupo: p.grupo, total: 0, extras: 0, faltan: 0, novedades: 0, esperados: 0 };
+      K.forEach((k, i) => {
+        const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + i); const f = d.toISOString().slice(0, 10);
+        const r = R.get(p.id + '|' + f);
+        const espera = i < 6 && conDatos.has(f) && activo(p.id, f);
+        if (espera) o.esperados++;
+        if (r && r.horas > 0) { o[k] = Math.round(r.horas * 100) / 100; o.total += r.horas; o.extras += r.extras; }
+        else if (r && r.novedad) { o[k] = r.novedad; o.novedades++; }
+        else { o[k] = espera ? 'falta' : null; if (espera) o.faltan++; }
+      });
+      if (o.total === 0 && o.novedades === 0 && o.esperados === 0) continue;
+      o.total = Math.round(o.total * 10) / 10; o.extras = Math.round(o.extras * 10) / 10;
+      o.estado = o.faltan === 0 ? (o.extras > 12 ? 'Más de 12 h extra' : 'Completo') : (o.faltan >= o.esperados ? 'Sin registro' : 'Parcial');
+      out.push(o);
+    }
+    return out;
+  },
+});
+dash.calc('cobertura_semana', {
+  title: 'Cobertura del registro por semana',
+  description: 'Por semana: personas esperadas, completas y parciales, días-persona sin registro y alertas (sin contar las informativas).',
+  inputs: ['semana_persona', 'alertas_dia'],
+  fn: (semana_persona, alertas_dia) => {
+    const lun = (s) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - (d.getUTCDay() + 6) % 7); return d.toISOString().slice(0, 10); };
+    const m = new Map();
+    for (const r of semana_persona) {
+      const o = m.get(r.lunes) || { lunes: r.lunes, esperadas: 0, completas: 0, parciales: 0, sin_registro: 0, dias_faltantes: 0, alertas: 0, altas: 0 };
+      if (r.esperados > 0) o.esperadas++;
+      if (r.estado === 'Completo' || r.estado === 'Más de 12 h extra') o.completas++; else if (r.estado === 'Parcial') o.parciales++; else if (r.estado === 'Sin registro') o.sin_registro++;
+      o.dias_faltantes += r.faltan; m.set(r.lunes, o);
+    }
+    for (const a of alertas_dia) { const o = m.get(lun(a.fecha)); if (!o) continue; if (a.nivel !== 'info') o.alertas++; if (a.nivel === 'alta') o.altas++; }
+    return [...m.values()];
+  },
+});
+dash.calc('por_maestro_dia', {
+  title: 'Registro por maestro y día',
+  description: 'Por fecha y maestro: personas de su cuadrilla con registro, horas, extras, no presupuestadas y hora del primer envío.',
+  inputs: ['registro_diario', 'personal'],
+  fn: (registro_diario, personal) => {
+    const cuad = new Map(); for (const p of personal) cuad.set(p.maestro, (cuad.get(p.maestro) || 0) + 1);
+    const P = new Map(personal.map((p) => [p.id, p]));
+    const m = new Map();
+    for (const r of registro_diario) {
+      const ma = (P.get(r.id) || {}).maestro || 'Sin maestro asignado';
+      const k = r.fecha + '|' + ma;
+      const o = m.get(k) || { clave: k, fecha: r.fecha, maestro: ma, cuadrilla: cuad.get(ma) || 0, ids: new Set(), horas: 0, extras: 0, np: 0, enviado: null };
+      if (r.horas > 0 || r.novedad) o.ids.add(r.id);
+      o.horas += r.horas; o.extras += r.extras; o.np += r.no_presupuestadas;
+      if (!r.conciliado && (!o.enviado || r.enviado > o.enviado)) o.enviado = r.enviado;
+      m.set(k, o);
+    }
+    return [...m.values()].map((o) => ({ clave: o.clave, fecha: o.fecha, maestro: o.maestro, cuadrilla: o.cuadrilla, personas: o.ids.size,
+      horas: Math.round(o.horas * 10) / 10, extras: Math.round(o.extras * 10) / 10, pct_np: o.horas ? o.np / o.horas : null, enviado: o.enviado || '' }));
+  },
+});
+dash.calc('por_maestro_semana', {
+  title: 'Registro por maestro y semana',
+  description: 'Por semana y maestro: personas de su cuadrilla con registro, días-persona sin registro, horas, extras, no presupuestadas y último envío.',
+  inputs: ['semana_persona', 'por_maestro_dia'],
+  fn: (semana_persona, por_maestro_dia) => {
+    const lun = (s) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - (d.getUTCDay() + 6) % 7); return d.toISOString().slice(0, 10); };
+    const m = new Map();
+    for (const r of semana_persona) {
+      const k = r.lunes + '|' + r.maestro;
+      const o = m.get(k) || { clave: k, lunes: r.lunes, maestro: r.maestro, personas: 0, faltan: 0, horas: 0, extras: 0, np: 0, enviado: '' };
+      if (r.total > 0 || r.novedades > 0) o.personas++;
+      o.faltan += r.faltan; o.horas += r.total; o.extras += r.extras; m.set(k, o);
+    }
+    for (const d of por_maestro_dia) {
+      const o = m.get(lun(d.fecha) + '|' + d.maestro); if (!o) continue;
+      o.np += (d.pct_np || 0) * d.horas; if (d.enviado > o.enviado) o.enviado = d.enviado;
+    }
+    return [...m.values()].map((o) => ({ clave: o.clave, lunes: o.lunes, maestro: o.maestro, personas: o.personas, faltan: o.faltan,
+      horas: Math.round(o.horas * 10) / 10, extras: Math.round(o.extras * 10) / 10, pct_np: o.horas ? o.np / o.horas : null, enviado: o.enviado }));
+  },
+});
+dash.calc('actividades_periodo', {
+  title: 'Actividades por día y por semana',
+  description: 'Horas, horas extra y personas por código de actividad, para cada día y cada semana, en total y por maestro.',
+  inputs: ['registro_diario', 'personal'],
+  fn: (registro_diario, personal) => {
+    const lun = (s) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - (d.getUTCDay() + 6) % 7); return d.toISOString().slice(0, 10); };
+    const P = new Map(personal.map((p) => [p.id, p]));
+    const m = new Map();
+    const add = (periodo, nivel, maestro, a, r) => {
+      const tipo = /^SUP/i.test(a.cod) ? 'Supervisión' : /^NP/i.test(a.cod) ? 'No presupuestada' : 'Presupuestada';
+      const ds = String(a.ds || '').replace(/\[(SUPERVISIÓN|NO PRESUPUESTADA)\]\s*/g, '').trim();
+      const k = nivel + '|' + periodo + '|' + maestro + '|' + a.cod + (tipo === 'No presupuestada' ? '|' + ds.toLowerCase().slice(0, 60) : '');
+      const o = m.get(k) || { clave: k, nivel, periodo, maestro, cod: a.cod, actividad: ds, frente: a.fr, tipo, ids: new Set(), horas: 0, extras: 0 };
+      o.ids.add(r.id); o.horas += a.hr; if (a.tp === 'ext' || /Extra/.test(a.tp)) o.extras += a.hr;
+      if (ds.length > o.actividad.length) o.actividad = ds;
+      m.set(k, o);
+    };
+    for (const r of registro_diario) {
+      const acts = JSON.parse(r.actividades || '[]');
+      const ma = (P.get(r.id) || {}).maestro || 'Sin maestro asignado';
+      for (const a of acts) {
+        if (!(a.hr > 0)) continue;
+        add(r.fecha, 'dia', '(todos)', a, r); add(r.fecha, 'dia', ma, a, r);
+        add(lun(r.fecha), 'semana', '(todos)', a, r); add(lun(r.fecha), 'semana', ma, a, r);
+      }
+    }
+    return [...m.values()].map((o) => ({ clave: o.clave, nivel: o.nivel, periodo: o.periodo, maestro: o.maestro, cod: o.cod, actividad: o.actividad, frente: o.frente, tipo: o.tipo,
+      personas: o.ids.size, ids: [...o.ids].join('|'), horas: Math.round(o.horas * 10) / 10, extras: Math.round(o.extras * 10) / 10 }));
+  },
+});
+dash.calc('cierres_semana', {
+  title: 'Cierre de cantidades por maestro',
+  description: 'Por semana y maestro con cuadrilla de dos o más personas: si envió el cierre semanal de cantidades (exigido desde el 12-oct).',
+  inputs: ['cierres_cantidades', 'personal', 'registro_diario'],
+  fn: (cierres_cantidades, personal, registro_diario) => {
+    const lun = (s) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - (d.getUTCDay() + 6) % 7); return d.toISOString().slice(0, 10); };
+    const n = new Map(); for (const p of personal) n.set(p.maestro, (n.get(p.maestro) || 0) + 1);
+    const maestros = [...new Set(personal.filter((p) => p.grupo === 'Maestro' && p.maestro === p.nombre && n.get(p.nombre) >= 2).map((p) => p.nombre))].sort();
+    const semanas = [...new Set(registro_diario.map((r) => lun(r.fecha)))].sort();
+    const C = new Map(cierres_cantidades.map((c) => [c.lunes + '|' + c.maestro.toLowerCase(), c]));
+    const out = [];
+    for (const s of semanas) for (const m of maestros) {
+      const c = C.get(s + '|' + m.toLowerCase());
+      out.push({ clave: s + '|' + m, lunes: s, maestro: m, estado: c ? 'Enviado' : s < '2026-10-12' ? 'No se pedía' : 'Pendiente', lineas: c ? c.lineas : 0, frentes: c ? c.frentes : '' });
+    }
+    return out;
+  },
+});
+</script>
+<script>
+// ---------------- cálculos (gerencia) ----------------
+dash.calc('pct_gerencia', {
+  title: 'Relaciones gerenciales',
+  description: 'Cobrado sobre ejecutado, desvío de maestros al cierre frente al presupuesto y equipos facturados sobre el componente de equipo ganado.',
+  inputs: ['indicadores_gerencia'],
+  fn: (indicadores_gerencia) => {
+    const v = Object.fromEntries(indicadores_gerencia.map((r) => [r.indicador, r.valor]));
+    return [
+      { indicador: 'pct_cobrado_de_ejecutado', valor: v.cobrado / v.ejecutado },
+      { indicador: 'maestros_desvio_cierre', valor: v.maestros_cierre_plan - v.maestros_ppto },
+      { indicador: 'equipos_relacion', valor: v.equipos_facturado / v.equipos_meta },
+    ];
+  },
+});
+dash.calc('alertas_gerencia', {
+  title: 'Alertas para gerencia',
+  description: 'Una alerta por tema (cobro, subcontratos, mano de obra, actividades, equipos, horas extra) con su cifra y la acción sugerida, a partir de los indicadores y frentes.',
+  inputs: ['indicadores_gerencia', 'frentes_gerencia', 'equipos_frente', 'actividades_sobre_apu', 'horas_extra_mes'],
+  fn: (indicadores_gerencia, frentes_gerencia, equipos_frente, actividades_sobre_apu, horas_extra_mes) => {
+    const v = Object.fromEntries(indicadores_gerencia.map((r) => [r.indicador, r.valor]));
+    const m = (x) => '$\u00a0' + Math.round(x * 1000).toLocaleString('es-CO');
+    const pc = (x) => Math.round(x * 100) + ' %';
+    const out = [];
+    out.push({ id: 'cobro', tema: 'Cobro', nivel: v.ejecutado_sin_cobrar > 5000 ? 'alta' : 'media', titulo: 'Obra ejecutada sin cobrar', cifra: m(v.ejecutado_sin_cobrar),
+      detalle: `Se ha cobrado el ${pc(v.cobrado / v.ejecutado)} de lo ejecutado según la curva S.`, accion: 'Llevar al próximo corte (3 o 24 del mes) los frentes con mayor ejecutado sin cobrar.' });
+    out.push({ id: 'sub', tema: 'Subcontratos', nivel: v.sub_sin_cobrar > 1000 ? 'alta' : 'media', titulo: 'Pagado a subcontratistas por obra sin cobrar', cifra: m(v.sub_sin_cobrar),
+      detalle: `Además hay ${m(v.sub_sobre_sinco)} contratados por encima del valor SINCO en ${v.sub_lineas_sobre} líneas y ${m(v.anticipo_por_amortizar)} de anticipos por amortizar.`, accion: 'Antes de pagar saldos o tramitar mayores valores, revisar las líneas sobre SINCO y exigir amortización de anticipos en cada acta.' });
+    const peor = frentes_gerencia.filter((f) => f.pct_gastado != null && f.mo_meta > 1).sort((a, b) => b.pct_gastado - a.pct_gastado)[0];
+    if (peor) out.push({ id: 'mo', tema: 'Mano de obra', nivel: peor.pct_gastado > 1 ? 'alta' : 'media', titulo: `Nómina propia en ${peor.frente}`, cifra: pc(peor.pct_gastado),
+      detalle: `de la MO que corresponde a lo ejecutado (${m(peor.mo_real)} contra ${m(peor.mo_meta)}). Al ritmo actual cierra en ${m(peor.mo_cierre)} contra ${m(peor.mo_ppto)} del APU.`, accion: 'Revisar cuadrilla y rendimiento del frente; mover personal o subcontratar las actividades que más pierden.' });
+    const desv = v.maestros_cierre_plan - v.maestros_ppto;
+    out.push({ id: 'adm', tema: 'Administración', nivel: desv > 0 ? 'media' : 'baja', titulo: 'Maestros al cierre si se llenan las vacantes', cifra: (desv > 0 ? '+' : '') + m(desv),
+      detalle: `Frente a ${m(v.maestros_ppto)} de presupuesto. Al ritmo del último mes cierran en ${m(v.maestros_cierre_ritmo)}.`, accion: `Decidir qué vacantes se llenan; el tope para cerrar dentro del presupuesto es ${m(v.maestros_tope_mes)} al mes.` });
+    const top = actividades_sobre_apu.slice().sort((a, b) => b.exceso - a.exceso).slice(0, 3);
+    out.push({ id: 'act', tema: 'Actividades', nivel: v.act_sobre_apu > 30 ? 'alta' : 'media', titulo: `${v.act_n_sobre_apu} actividades con nómina sobre el APU`, cifra: m(v.act_sobre_apu),
+      detalle: 'Las mayores: ' + top.map((a) => `${a.cod} (${m(a.exceso)})`).join(', ') + `. Otras ${v.act_n_sin_mo} actividades tienen nómina sin MO en el APU (${m(v.act_sin_mo)}).`, accion: 'Trasiegos y retiros de escombro concentran el exceso: comparar con el precio de los contratistas de MO antes de seguir con cuadrilla propia.' });
+    const eq = equipos_frente.filter((e) => e.rel != null && e.real > 3).sort((a, b) => b.rel - a.rel)[0];
+    out.push({ id: 'eq', tema: 'Equipos', nivel: v.equipos_facturado > v.equipos_meta ? 'alta' : 'media', titulo: 'Equipos facturados contra lo ganado', cifra: pc(v.equipos_facturado / v.equipos_meta),
+      detalle: `${m(v.equipos_facturado)} facturados jul–sep contra ${m(v.equipos_meta)} del componente de equipo ganado.` + (eq ? ` El mayor desfase es ${eq.frente}: ${m(eq.real)} contra ${m(eq.meta)}.` : ''), accion: 'Devolver equipos ociosos y cargar cada alquiler al código de la actividad que lo usa.' });
+    const he = horas_extra_mes.slice(-3); const pag = he.reduce((s, r) => s + r.pagado, 0), base = he.reduce((s, r) => s + r.base, 0);
+    out.push({ id: 'he', tema: 'Horas extra', nivel: pag / base > v.he_tope ? 'alta' : 'baja', titulo: 'Horas extra sobre el básico (últimos 3 meses)', cifra: pc(pag / base),
+      detalle: `Tope ${pc(v.he_tope)}. Pagado ${m(pag)} sobre un básico de ${m(base)}.`, accion: 'Mantener la autorización previa de extras y revisar a quienes pasan del 40 % varios meses.' });
+    return out;
+  },
+});
+</script>
+<script>
+// ---------------- vistas, controles y dibujo ----------------
+(() => {
+  const C = window.CO;
+  const $ = (id) => document.getElementById(id);
+  const COLS = ['lun', 'mar', 'mie', 'jue', 'vie', 'sab', 'dom'];
+  const DC = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+  const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  const ok = (id) => dash.data(id).status === 'ok';
+  const D = (id) => dash.data(id).data || [];
+  const el = C.el;
+  const horaCol = (s) => s ? new Date(s + ':00Z').toLocaleString('es-CO', { timeZone: 'America/Bogota', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Conciliación';
+  const pill = (cls, t) => el('span', 'pill ' + cls, t);
+  const fila = (tb, cells, numIdx) => { const tr = document.createElement('tr'); cells.forEach((t, i) => { const td = el('td', (numIdx || []).includes(i) ? 'n' : ''); if (t instanceof Node) td.appendChild(t); else td.textContent = t; tr.appendChild(td); }); tb.appendChild(tr); return tr; };
+  const vacio = (tb, n, txt) => { const tr = document.createElement('tr'); const td = el('td', 'vacio', txt); td.colSpan = n; tr.appendChild(td); tb.appendChild(tr); };
+  const fechaCorta = (s) => { const d = new Date(s + 'T12:00:00Z'); return d.getUTCDate() + ' ' + MESES[d.getUTCMonth()]; };
+  const sparkEl = (vals, iSel) => {
+    const max = Math.max(...vals.map((v) => v || 0), 1);
+    const s = el('div', 'spark'); s.setAttribute('aria-hidden', 'true');
+    vals.forEach((v, i) => { const b = el('i', i === iSel ? 'on' : ''); b.style.height = Math.max(3, Math.round((v || 0) / max * 28)) + 'px'; s.appendChild(b); });
+    return s;
+  };
+  const kpi = (cls, label, valor, unidad, nota, notaTono, spark) => {
+    const k = el('div', 'kpi ' + (cls || ''));
+    k.appendChild(el('span', 'l', label));
+    const v = el('span', 'v', valor); if (unidad) v.appendChild(el('small', '', unidad)); k.appendChild(v);
+    if (spark) k.appendChild(spark);
+    k.appendChild(el('span', 's' + (notaTono ? ' tono' : ''), nota));
+    return k;
+  };
+
+  // ---------- pestañas ----------
+  const tabs = { admin: $('tab-admin'), gerencia: $('tab-gerencia') };
+  const show = (v) => {
+    C.state.vista = v;
+    for (const [k, b] of Object.entries(tabs)) { b.setAttribute('aria-selected', String(k === v)); $(k).hidden = k !== v; }
+    redraw();
+  };
+  tabs.admin.addEventListener('click', () => show('admin'));
+  tabs.gerencia.addEventListener('click', () => show('gerencia'));
+  window.CO_mostrar = () => show(C.state.vista || 'admin');
+
+  // ---------- controles ----------
+  const ss = $('sel-semana'), sm = $('sel-maestro');
+  ss.addEventListener('change', () => { C.state.sel = null; dash.setParams({ semana: ss.value || null, dia: null }); });
+  sm.addEventListener('change', () => dash.setParams({ maestro: sm.value || null }));
+  const moverSemana = (d) => { const s = D('semanas').map((r) => r.lunes); const i = s.indexOf(C.state.lun); const j = i + d; if (j >= 0 && j < s.length) { C.state.sel = null; dash.setParams({ semana: s[j], dia: null }); } };
+  $('sem-prev').addEventListener('click', () => moverSemana(-1));
+  $('sem-next').addEventListener('click', () => moverSemana(1));
+  $('act-q').addEventListener('input', (e) => { C.state.actQ = e.target.value; C.state.actSel = null; redraw(); });
+
+  // ===================== ADMINISTRADOR =====================
+  function drawAdmin() {
+    if (!ok('semanas') || !ok('personal')) return;
+    const sem = D('semanas'), per = D('personal'), res = ok('resumen_dia') ? D('resumen_dia') : [];
+    const semanas = sem.map((r) => r.lunes);
+    const prm = dash.params();
+    const lun = prm.semana && semanas.includes(prm.semana) ? prm.semana : semanas[semanas.length - 1];
+    C.state.lun = lun;
+    const iS = semanas.indexOf(lun);
+    const S = sem[iS];
+    const esApp = S.fuente === 'App';
+    const diasSem = res.map((r) => r.fecha).filter((f) => C.lunes(f) === lun);
+    const dia = prm.dia && diasSem.includes(prm.dia) ? prm.dia : '';
+    const maestro = esApp ? (prm.maestro || '') : '';
+
+    // controles
+    if (document.activeElement !== ss) {
+      ss.replaceChildren(...sem.slice().reverse().map((r) => new Option(`${fechaCorta(r.lunes)} – ${fechaCorta(C.addD(r.lunes, 6))}` + (r.fuente === 'App' ? '' : ' · nómina'), r.lunes)));
+      ss.value = lun;
+    }
+    const nSem = (() => { const d = new Date(lun + 'T12:00:00Z'); const t = new Date(Date.UTC(d.getUTCFullYear(), 0, 4)); return 1 + Math.round(((d - t) / 864e5 - 3 + ((t.getUTCDay() + 6) % 7)) / 7); })();
+    $('sem-eyebrow').textContent = `Semana ${nSem} · lunes a domingo` + (esApp ? '' : ' · nómina repartida');
+    $('sem-prev').disabled = iS <= 0; $('sem-next').disabled = iS >= semanas.length - 1;
+    const chips = $('dias'); chips.replaceChildren();
+    const todo = el('button', 'chip', 'Toda la semana'); todo.type = 'button'; todo.setAttribute('aria-pressed', String(!dia));
+    todo.addEventListener('click', () => dash.setParams({ dia: null })); chips.appendChild(todo);
+    COLS.forEach((k, i) => {
+      const f = C.addD(lun, i); const b = el('button', 'chip'); b.type = 'button';
+      b.appendChild(el('small', '', DC[i])); b.appendChild(document.createTextNode(String(new Date(f + 'T12:00:00Z').getUTCDate())));
+      b.disabled = !diasSem.includes(f); b.setAttribute('aria-pressed', String(dia === f));
+      b.addEventListener('click', () => dash.setParams({ dia: dia === f ? null : f }));
+      chips.appendChild(b);
+    });
+    if (document.activeElement !== sm) {
+      const ms = [...new Set(per.map((p) => p.maestro))].sort();
+      sm.replaceChildren(new Option('Todos los maestros', ''), ...ms.map((m) => new Option(m, m))); sm.value = maestro; sm.disabled = !esApp;
+    }
+    $('aviso-nomina').hidden = esApp;
+    ['grid-registro', 'card-alertas', 'card-actividades', 'card-semana', 'card-cierres'].forEach((id) => { $(id).hidden = !esApp; });
+
+    const cob = ok('cobertura_semana') ? D('cobertura_semana') : [];
+    const CB = cob.find((r) => r.lunes === lun);
+    const R = dia ? res.find((r) => r.fecha === dia) : null;
+    const prev = sem[iS - 1];
+
+    // ---------- titular ----------
+    const sp = ok('semana_persona') ? D('semana_persona').filter((r) => r.lunes === lun) : [];
+    const mas12 = sp.filter((r) => r.estado === 'Más de 12 h extra').length;
+    if (!esApp) {
+      $('lead').textContent = `Semana del ${fechaCorta(lun)}: la nómina SINCO repartida da ${C.pesosM(S.costo)} para ${C.N(S.personas)} personas.`;
+      $('sublead').textContent = 'El registro diario por persona empieza con la app (' + fechaCorta(D('meta').inicio_app || '2026-08-17') + ').';
+    } else if (R) {
+      $('lead').textContent = `${C.fecha(dia, true).replace(/^./, (c) => c.toUpperCase())}: registraron ${C.N(R.con_registro)} de ${C.N(R.esperadas)} personas` + (R.sin_registro ? ` y faltan ${C.N(R.sin_registro)}.` : '.') + ` El ${C.P(R.pct_np)} de las horas fue no presupuestado.`;
+      $('sublead').textContent = `${C.H(R.horas)} horas · ${C.P(R.pct_extra)} en extras`;
+    } else {
+      const comp = CB && CB.dias_faltantes === 0;
+      $('lead').textContent = (comp ? `Semana completa: los ${C.N(CB.esperadas)} registraron todos los días. ` : CB ? `Faltan ${C.N(CB.dias_faltantes)} días-persona por registrar. ` : '') +
+        (mas12 ? `${C.N(mas12)} personas pasaron de 12 h extra y el ` : 'El ') + `${C.P(S.np)} de las horas fue no presupuestado.`;
+      $('sublead').textContent = `Costo estimado ${C.pesosM(S.costo)} · ${C.H(S.horas)} horas` + (S.dias < 6 ? ` · semana en curso (${S.dias} día${S.dias === 1 ? '' : 's'} con datos)` : '');
+    }
+
+    // ---------- tarjetas ----------
+    const ini = Math.max(0, iS - 7), win = sem.slice(ini, iS + 1), sel = iS - ini;
+    const wc = (l) => cob.find((r) => r.lunes === l) || {};
+    const box = $('kpis'); box.replaceChildren();
+    if (!dia) {
+      const dCosto = prev && S.dias !== null && S.dias < 6 ? null : prev ? (S.costo - prev.costo) / prev.costo : null;
+      box.appendChild(kpi('ok', 'Costo de la semana', C.pesosM(S.costo).replace('\u00a0M', ''), 'M',
+        dCosto == null ? (S.dias < 6 && esApp ? 'Semana en curso' : (esApp ? 'Estimado con la app' : 'Nómina SINCO repartida')) : `${dCosto > 0 ? '+' : '−'}${C.P(Math.abs(dCosto))} frente a la semana anterior`, true, sparkEl(win.map((r) => r.costo), sel)));
+      box.appendChild(kpi(esApp && CB && CB.dias_faltantes ? 'bad' : 'ok', esApp ? 'Personas con registro' : 'Personas en la nómina', C.N(S.personas), esApp && CB ? 'de ' + C.N(CB.esperadas) : '',
+        esApp && CB ? `${C.N(CB.completas)} completas · ${C.N(CB.parciales)} parciales` : 'Maestros, oficiales y ayudantes', false, sparkEl(win.map((r) => r.personas), sel)));
+      if (esApp) {
+        box.appendChild(kpi(CB && CB.dias_faltantes ? 'bad' : 'ok', 'Días-persona sin registro', CB ? C.N(CB.dias_faltantes) : '—', '',
+          prev && wc(prev.lunes).dias_faltantes != null ? `La semana anterior: ${C.N(wc(prev.lunes).dias_faltantes)}` : 'Lunes a sábado', true, sparkEl(win.map((r) => wc(r.lunes).dias_faltantes || 0), sel)));
+        box.appendChild(kpi('', 'Horas registradas', C.N(S.horas), 'h', `${C.P(S.extra)} en horas extra`, false, sparkEl(win.map((r) => r.horas || 0), sel)));
+        box.appendChild(kpi(S.np > 0.3 ? 'warn' : 'ok', 'No presupuestado', C.N(Math.round(S.np * 100)), '%', 'Horas en códigos NP', true, sparkEl(win.map((r) => r.np || 0), sel)));
+        box.appendChild(kpi(CB && CB.altas ? 'bad' : CB && CB.alertas ? 'warn' : 'ok', 'Alertas', CB ? C.N(CB.alertas) : '0', '', CB ? `${C.N(CB.altas)} de nivel alto` : 'Sin alertas', true, sparkEl(win.map((r) => wc(r.lunes).alertas || 0), sel)));
+      } else {
+        box.appendChild(kpi('', 'Maestros (va a la A)', S.costo_maestros != null ? C.pesosM(S.costo_maestros).replace('\u00a0M', '') : '—', 'M', 'Proporción de la nómina del mes', false, null));
+      }
+    } else if (R) {
+      const cd = ok('costo_dia') ? D('costo_dia').find((r) => r.fecha === dia) : null;
+      const ca = ok('conteo_alertas') ? D('conteo_alertas').find((r) => r.fecha === dia) : null;
+      const dsem = res.filter((r) => C.lunes(r.fecha) === lun); const iD = dsem.findIndex((r) => r.fecha === dia);
+      box.appendChild(kpi('ok', 'Costo del día', cd ? C.pesosM(cd.costo).replace('\u00a0M', '') : '—', 'M', cd ? C.pesosM(cd.costo_maestros) + ' de maestros (A)' : '', false, sparkEl(dsem.map((r) => { const c = D('costo_dia').find((x) => x.fecha === r.fecha); return c ? c.costo : 0; }), iD)));
+      box.appendChild(kpi(R.sin_registro ? 'bad' : 'ok', 'Personas con registro', C.N(R.con_registro), 'de ' + C.N(R.esperadas), `${C.N(R.con_novedad)} con novedad`, false, sparkEl(dsem.map((r) => r.con_registro), iD)));
+      box.appendChild(kpi(R.sin_registro ? 'bad' : 'ok', 'Sin registro', R.sin_registro == null ? 'Dom' : C.N(R.sin_registro), '', R.sin_registro == null ? 'No se exige registro' : 'Ni horas ni novedad', true, null));
+      box.appendChild(kpi('', 'Horas registradas', C.H(R.horas), 'h', `${C.P(R.pct_extra)} en horas extra`, false, sparkEl(dsem.map((r) => r.horas), iD)));
+      box.appendChild(kpi(R.pct_np > 0.3 ? 'warn' : 'ok', 'No presupuestado', C.N(Math.round((R.pct_np || 0) * 100)), '%', `${C.H(R.no_presupuestadas)} h en códigos NP`, true, sparkEl(dsem.map((r) => r.pct_np || 0), iD)));
+      box.appendChild(kpi(ca && ca.altas ? 'bad' : ca && ca.alertas ? 'warn' : 'ok', 'Alertas del día', C.N(ca ? ca.alertas : 0), '', `${C.N(ca ? ca.altas : 0)} de nivel alto`, true, null));
+    }
+
+    drawHistorico(lun);
+    drawHoy();
+    drawCostoFrente(lun);
+    drawSemanas(lun);
+    if (!esApp) return;
+
+    // ---------- falta registrar ----------
+    const pend = ok('pendientes_dia') ? D('pendientes_dia') : [];
+    const fb = $('faltan'); fb.replaceChildren();
+    $('titulo-faltan').textContent = dia ? 'Falta registrar · ' + C.fecha(dia, true) : 'Falta registrar en la semana';
+    const lista = pend.filter((p) => (dia ? p.fecha === dia : C.lunes(p.fecha) === lun) && (!maestro || p.maestro === maestro));
+    if (!lista.length) fb.appendChild(el('p', 'vacio', 'Todo el personal activo tiene registro o novedad.'));
+    for (const [m, ps] of d3.group(lista, (p) => p.maestro)) {
+      const porP = d3.group(ps, (p) => p.nombre);
+      const g = el('div', 'g'); g.appendChild(el('b', '', `${m} · ${porP.size} persona${porP.size === 1 ? '' : 's'}, ${ps.length} día${ps.length === 1 ? '' : 's'}`));
+      const tg = el('div', 'tags');
+      for (const [nombre, xs] of porP) tg.appendChild(el('span', 'tag bad', nombre + (dia ? '' : ' · ' + xs.map((x) => DC[(new Date(x.fecha + 'T12:00:00Z').getUTCDay() + 6) % 7]).join(', '))));
+      g.appendChild(tg); fb.appendChild(g);
+    }
+
+    // ---------- por maestro ----------
+    const tb = $('tb-maestros').querySelector('tbody'); tb.replaceChildren();
+    $('titulo-maestros').textContent = dia ? 'Registro por maestro · ' + C.fecha(dia, true) : 'Registro por maestro en la semana';
+    if (dia) {
+      $('th-m3').textContent = 'Cuadrilla';
+      const pd = pend.filter((p) => p.fecha === dia);
+      D('por_maestro_dia').filter((r) => r.fecha === dia && (!maestro || r.maestro === maestro)).sort((a, b) => b.horas - a.horas)
+        .forEach((r) => fila(tb, [r.maestro, C.N(r.personas), C.N(r.personas + pd.filter((p) => p.maestro === r.maestro).length), C.H(r.horas), C.H(r.extras), C.P(r.pct_np), horaCol(r.enviado)], [1, 2, 3, 4, 5]));
+    } else {
+      $('th-m3').textContent = 'Días sin registro';
+      D('por_maestro_semana').filter((r) => r.lunes === lun && (!maestro || r.maestro === maestro)).sort((a, b) => b.faltan - a.faltan || b.horas - a.horas)
+        .forEach((r) => { const tr = fila(tb, [r.maestro, C.N(r.personas), C.N(r.faltan), C.H(r.horas), C.H(r.extras), C.P(r.pct_np), horaCol(r.enviado)], [1, 2, 3, 4, 5]); if (r.faltan) tr.children[2].style.color = 'var(--rojo)'; });
+    }
+
+    // ---------- alertas ----------
+    const al = ok('alertas_dia') ? D('alertas_dia').filter((a) => (dia ? a.fecha === dia : C.lunes(a.fecha) === lun) && (!maestro || a.maestro === maestro)) : [];
+    $('titulo-alertas').textContent = dia ? 'Alertas · ' + C.fecha(dia, true) : 'Alertas de la semana';
+    $('alertas-total').textContent = `${C.N(al.length)} en total · ${C.N(al.filter((a) => a.nivel === 'alta').length)} altas`;
+    const porTipo = [...d3.rollup(al, (v) => ({ n: v.length, nivel: v[0].nivel }), (a) => a.tipo)].sort((a, b) => b[1].n - a[1].n);
+    const maxT = Math.max(1, ...porTipo.map((x) => x[1].n));
+    const at = $('alertas-tipos'); at.replaceChildren();
+    if (!porTipo.length) at.appendChild(el('p', 'vacio', 'Sin alertas.'));
+    porTipo.forEach(([tipo, o]) => {
+      const b = el('div', 'tbar'); const t = el('div', 't'); t.appendChild(el('span', '', tipo)); t.appendChild(el('b', '', C.N(o.n))); b.appendChild(t);
+      const tr = el('div', 'track'); const i = el('i'); i.style.width = Math.round(o.n / maxT * 100) + '%'; i.style.background = o.nivel === 'alta' ? 'var(--rojo)' : o.nivel === 'media' ? 'var(--ambar)' : 'var(--gris)'; tr.appendChild(i); b.appendChild(tr);
+      at.appendChild(b);
+    });
+    const ord = { alta: 0, media: 1, info: 2 };
+    const ords = al.slice().sort((a, b) => ord[a.nivel] - ord[b.nivel] || (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0) || a.nombre.localeCompare(b.nombre));
+    const top = $('alertas-top'); top.replaceChildren();
+    ords.filter((a) => a.nivel !== 'info').slice(0, 5).forEach((a) => {
+      const d = el('div'); d.style.cssText = 'display:flex;gap:10px;align-items:flex-start;font-size:14px';
+      d.appendChild(pill(a.nivel, DC[(new Date(a.fecha + 'T12:00:00Z').getUTCDay() + 6) % 7] + ' ' + new Date(a.fecha + 'T12:00:00Z').getUTCDate()));
+      const s = el('span'); const b = el('b', '', a.nombre); b.style.fontWeight = '600'; s.appendChild(b); s.appendChild(document.createTextNode(' · ' + a.tipo.toLowerCase() + ': ' + a.detalle)); d.appendChild(s);
+      top.appendChild(d);
+    });
+    if (!top.children.length) top.appendChild(el('p', 'vacio', 'Nada urgente.'));
+    const ta = $('tb-alertas').querySelector('tbody'); ta.replaceChildren();
+    if (!ords.length) vacio(ta, 6, 'Sin alertas.');
+    ords.forEach((a) => fila(ta, [pill(a.nivel, a.nivel === 'info' ? 'Info' : a.nivel === 'alta' ? 'Alta' : 'Media'), C.fecha(a.fecha, true), a.nombre, a.maestro, a.tipo, a.detalle]));
+
+    // ---------- actividades ----------
+    const tipos = ['', 'Presupuestada', 'No presupuestada', 'Supervisión'];
+    const ct = $('act-tipos'); ct.replaceChildren();
+    tipos.forEach((t) => { const b = el('button', 'chip', t ? t.replace('Presupuestada', 'Presupuestadas').replace('No presupuestada', 'No presupuestadas') : 'Todas'); b.type = 'button'; b.setAttribute('aria-pressed', String((C.state.actTipo || '') === t)); b.addEventListener('click', () => { C.state.actTipo = t; C.state.actSel = null; redraw(); }); ct.appendChild(b); });
+    const ap = ok('actividades_periodo') ? D('actividades_periodo') : [];
+    const qq = (C.state.actQ || '').toLowerCase(), tipoSel = C.state.actTipo || '';
+    const base = ap.filter((r) => r.nivel === (dia ? 'dia' : 'semana') && r.periodo === (dia || lun) && r.maestro === (maestro || '(todos)'));
+    const rowsA = base.filter((r) => (!tipoSel || r.tipo === tipoSel) && (!qq || (r.cod + ' ' + r.actividad + ' ' + r.frente).toLowerCase().includes(qq))).sort((a, b) => b.horas - a.horas);
+    $('titulo-actividades').textContent = dia ? 'Qué se hizo el ' + C.fecha(dia, true) : 'Qué se hizo en la semana';
+    const totH = d3.sum(base, (r) => r.horas);
+    $('act-sub').textContent = `${C.N(base.length)} actividades · ${C.H(totH)} horas. Toque una actividad para ver quiénes la hicieron.`;
+    const colT = { 'Presupuestada': 'var(--verde)', 'No presupuestada': 'var(--ambar)', 'Supervisión': 'var(--gris-azul)' };
+    const pT = d3.rollup(base, (v) => d3.sum(v, (r) => r.horas), (r) => r.tipo);
+    const st = $('act-stack'); st.replaceChildren(); const lg = $('act-leyenda'); lg.replaceChildren();
+    ['Presupuestada', 'No presupuestada', 'Supervisión'].forEach((t) => {
+      const v = pT.get(t) || 0; if (!totH) return;
+      const i = el('i'); i.style.width = (v / totH * 100) + '%'; i.style.background = colT[t]; st.appendChild(i);
+      const s = el('span'); const sw = el('i', 'sw'); sw.style.background = colT[t]; s.appendChild(sw); s.appendChild(document.createTextNode(`${t.replace('Presupuestada', 'Presupuestadas').replace('No presupuestada', 'No presupuestadas')} ${C.N(Math.round(v))} h · ${C.P(v / totH)}`)); lg.appendChild(s);
+    });
+    st.setAttribute('aria-label', [...pT].map(([t, v]) => `${t} ${C.P(v / totH)}`).join(', '));
+    const tact = $('tb-actividades').querySelector('tbody'); tact.replaceChildren();
+    const maxH = Math.max(1, ...rowsA.map((r) => r.horas));
+    const PN = new Map(per.map((p) => [p.id, p.nombre]));
+    if (!rowsA.length) vacio(tact, 6, 'Sin actividades con ese filtro.');
+    rowsA.slice(0, 200).forEach((r) => {
+      const tipoP = pill(r.tipo === 'Presupuestada' ? 'Verde' : r.tipo === 'No presupuestada' ? 'Amarillo' : 'info', r.tipo);
+      const hb = el('div', 'xbar'); const tr_ = el('span'); const i1 = el('i'); i1.style.width = ((r.horas - r.extras) / maxH * 100) + '%'; i1.style.background = colT[r.tipo];
+      const i2 = el('i'); i2.style.width = (r.extras / maxH * 100) + '%'; i2.style.background = colT[r.tipo]; i2.style.opacity = '.5';
+      tr_.style.display = 'flex'; tr_.appendChild(i1); tr_.appendChild(i2); hb.appendChild(tr_);
+      const lab = el('b', '', C.H(r.horas) + ' h'); lab.style.whiteSpace = 'nowrap'; const ex = el('span', 'muted', ' (' + C.H(r.extras) + ')'); lab.appendChild(ex); hb.appendChild(lab);
+      const tr = fila(tact, [r.cod, r.actividad, r.frente, tipoP, C.N(r.personas), hb], [4]);
+      tr.className = 'clic' + (C.state.actSel === r.clave ? ' sel' : ''); tr.tabIndex = 0;
+      const tog = () => { C.state.actSel = C.state.actSel === r.clave ? null : r.clave; redraw(); };
+      tr.addEventListener('click', tog); tr.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tog(); } });
+      if (C.state.actSel === r.clave) {
+        const t2 = document.createElement('tr'); t2.className = 'sel'; const td = el('td', 'det'); td.colSpan = 6;
+        const b = el('b', '', 'Quiénes: '); td.appendChild(b); td.appendChild(document.createTextNode(r.ids.split('|').map((i) => PN.get(i) || i).sort().join(', ')));
+        t2.appendChild(td); tact.appendChild(t2);
+      }
+    });
+
+    // ---------- matriz ----------
+    const mh = $('mz-head'); mh.replaceChildren();
+    ['Persona', 'Maestro'].forEach((t) => mh.appendChild(el('th', '', t)));
+    COLS.forEach((k, i) => { const th = el('th', '', DC[i] + ' ' + new Date(C.addD(lun, i) + 'T12:00:00Z').getUTCDate()); th.style.textAlign = 'center'; mh.appendChild(th); });
+    mh.appendChild(el('th', 'n', 'Total')); mh.appendChild(el('th', '', 'Extra (tope 12 h)'));
+    $('titulo-semana').textContent = `Quién trabajó cada día · ${fechaCorta(lun)} al ${fechaCorta(C.addD(lun, 6))}`;
+    const ts = $('tb-semana').querySelector('tbody'); ts.replaceChildren();
+    const ordE = { 'Sin registro': 0, 'Parcial': 1, 'Más de 12 h extra': 2, 'Completo': 3 };
+    sp.filter((r) => !maestro || r.maestro === maestro).sort((a, b) => ordE[a.estado] - ordE[b.estado] || b.extras - a.extras || a.nombre.localeCompare(b.nombre)).forEach((r) => {
+      const tr = document.createElement('tr'); tr.className = 'clic' + (C.state.sel === r.id ? ' sel' : ''); tr.tabIndex = 0;
+      tr.appendChild(el('td', 'nm', r.nombre)); tr.appendChild(el('td', 'ms', r.maestro));
+      COLS.forEach((k, i) => {
+        const td = el('td'); const v = r[k]; let cls = 'cell none', txt = '·';
+        if (typeof v === 'number') { cls = 'cell ' + (v > 12 ? 'over' : 'full'); txt = C.H(v); }
+        else if (v === 'falta') { cls = 'cell miss'; txt = 'falta'; }
+        else if (typeof v === 'string' && v) { cls = 'cell nov'; txt = v.split(/[ (;]/)[0].slice(0, 9); td.title = v; }
+        if (dia && C.addD(lun, i) === dia) cls += ' hoy';
+        td.appendChild(el('span', cls, txt)); tr.appendChild(td);
+      });
+      const tt = el('td', 'n', C.H(r.total)); tt.style.fontWeight = '700'; tr.appendChild(tt);
+      const xb = el('div', 'xbar'); const sp_ = el('span'); const i = el('i'); i.style.width = Math.min(100, r.extras / 30 * 100) + '%'; i.style.background = r.extras > 12 ? 'var(--rojo)' : 'var(--verde)'; sp_.appendChild(i); xb.appendChild(sp_);
+      const lb = el('b', '', C.H(r.extras)); lb.style.color = r.extras > 12 ? 'var(--rojo)' : 'var(--verde)'; lb.style.minWidth = '34px'; lb.style.textAlign = 'right'; xb.appendChild(lb);
+      const tx = el('td'); tx.style.padding = '6px 8px'; tx.appendChild(xb); tr.appendChild(tx);
+      const tog = () => { C.state.sel = C.state.sel === r.id ? null : r.id; redraw(); };
+      tr.addEventListener('click', tog); tr.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tog(); } });
+      ts.appendChild(tr);
+    });
+    const det = $('detalle'); det.replaceChildren();
+    if (C.state.sel) {
+      const p = per.find((x) => x.id === C.state.sel);
+      const regs = D('registro_diario').filter((x) => x.id === C.state.sel && (dia ? x.fecha === dia : C.lunes(x.fecha) === lun)).sort((a, b) => a.fecha < b.fecha ? -1 : 1);
+      det.appendChild(el('h3', '', `${p ? p.nombre : ''} · ${p ? p.cargo : ''} · ${dia ? C.fecha(dia, true) : 'semana del ' + fechaCorta(lun)}`));
+      if (!regs.length) det.appendChild(el('p', 'vacio', 'Sin registro.'));
+      else {
+        const t = document.createElement('table'); const th = document.createElement('thead'); const hr = document.createElement('tr');
+        ['Día', 'Frente', 'Código', 'Actividad', 'Tipo de hora', 'Horas', 'Registró'].forEach((h, i) => hr.appendChild(el('th', i === 5 ? 'n' : '', h)));
+        th.appendChild(hr); t.appendChild(th); const tb2 = document.createElement('tbody');
+        const TP = { ord: 'Ordinaria', ext: 'Extra diurna', noc: 'Nocturna', dom: 'Dominical' };
+        regs.forEach((r) => {
+          const acts = JSON.parse(r.actividades || '[]');
+          if (!acts.length && r.novedad) fila(tb2, [C.fecha(r.fecha, true), '', '', 'Novedad: ' + r.novedad, '', '0', r.registrado_por], [5]);
+          acts.forEach((a) => fila(tb2, [C.fecha(r.fecha, true), a.fr, a.cod, a.ds, TP[a.tp] || a.tp, C.H(a.hr), r.registrado_por], [5]));
+        });
+        t.appendChild(tb2); det.appendChild(t);
+      }
+    }
+
+    // ---------- cierres ----------
+    const ci = ok('cierres_semana') ? D('cierres_semana').filter((r) => r.lunes === lun && (!maestro || r.maestro === maestro)) : [];
+    const cb = $('cierres'); cb.replaceChildren();
+    $('cierres-cuenta').textContent = `${ci.filter((r) => r.estado === 'Enviado').length} de ${ci.length} maestros`;
+    ci.sort((a, b) => (a.estado === 'Enviado') - (b.estado === 'Enviado')).forEach((r) => {
+      const c = el('div', 'chk ' + (r.estado === 'Enviado' ? 'ok' : r.estado === 'Pendiente' ? 'bad' : 'na'));
+      c.appendChild(el('span', 'dot', r.estado === 'Enviado' ? '✓' : r.estado === 'Pendiente' ? '!' : '–'));
+      c.appendChild(el('span', 'nm', r.maestro));
+      c.appendChild(el('span', 'dt', r.estado === 'Enviado' ? `Enviado · ${r.lineas} líneas` : r.estado));
+      cb.appendChild(c);
+    });
+  }
+
+  function drawHoy() {
+    const res = ok('resumen_dia') ? D('resumen_dia') : [];
+    if (!res.length) return;
+    const R = res[res.length - 1];
+    $('hoy-titulo').textContent = C.fecha(R.fecha, true).replace(/^./, (c) => c.toUpperCase());
+    const reg = R.con_registro + R.con_novedad;
+    const frac = R.esperadas ? reg / R.esperadas : 0;
+    $('hoy-arc').setAttribute('stroke-dasharray', `${Math.round(289 * frac)} 289`);
+    $('hoy-n').textContent = C.N(reg); $('hoy-de').textContent = 'de ' + C.N(R.esperadas);
+    $('hoy-ring').setAttribute('aria-label', `${reg} de ${R.esperadas} personas registradas`);
+    const pend = (ok('pendientes_dia') ? D('pendientes_dia') : []).filter((p) => p.fecha === R.fecha);
+    const pm = (ok('por_maestro_dia') ? D('por_maestro_dia') : []).filter((r) => r.fecha === R.fecha);
+    const m = new Map();
+    pm.forEach((r) => m.set(r.maestro, { ok: r.personas, falta: 0 }));
+    pend.forEach((p) => { const o = m.get(p.maestro) || { ok: 0, falta: 0 }; o.falta++; m.set(p.maestro, o); });
+    const lista = [...m].sort((a, b) => (b[1].falta > 0) - (a[1].falta > 0) || b[1].falta - a[1].falta || a[0].localeCompare(b[0]));
+    const sinEnviar = lista.filter(([, o]) => o.ok === 0 && o.falta > 0).map(([n]) => n.split(' ').slice(0, 2).join(' '));
+    $('hoy-faltan').textContent = R.sin_registro ? `Faltan ${C.N(R.sin_registro)}` : R.sin_registro === 0 ? 'Todos registrados' : 'Domingo';
+    $('hoy-faltan').style.color = R.sin_registro ? 'var(--rojo)' : 'var(--verde)';
+    $('hoy-txt').textContent = sinEnviar.length ? `Sin enviar: ${sinEnviar.join(', ')}.` : `${C.N(R.maestros_envio)} maestros enviaron.`;
+    const ul = $('hoy-lista'); ul.replaceChildren();
+    lista.forEach(([n, o]) => {
+      const li = el('li'); const okk = o.falta === 0;
+      li.appendChild(el('span', 'ic ' + (okk ? 'ok' : 'bad'), okk ? '✓' : '!'));
+      li.appendChild(el('span', 'nm', n));
+      li.appendChild(el('span', 'ct', `${o.ok}/${o.ok + o.falta}`));
+      const mb = el('span', 'minibar'); const i = el('i'); i.style.width = Math.max(4, Math.round(o.ok / Math.max(1, o.ok + o.falta) * 100)) + '%'; i.style.background = okk ? 'var(--verde)' : 'var(--rojo)'; mb.appendChild(i); li.appendChild(mb);
+      ul.appendChild(li);
+    });
+  }
+
+  function drawHistorico(lunSel) {
+    const box = $('ch-historico'); box.querySelectorAll('svg').forEach((e) => e.remove());
+    if (!ok('historico_frente')) { if (C.failed('historico_frente')) C.fail(box); return; }
+    const d = D('historico_frente');
+    const lunes = [...new Set(d.map((r) => r.lunes))].sort();
+    const fuente = new Map(d.map((r) => [r.lunes, r.fuente]));
+    const rows = lunes.map((l) => { const xs = d.filter((r) => r.lunes === l); return { lunes: l, total: d3.sum(xs, (r) => r.costo) / 1e6, top: xs.sort((a, b) => b.costo - a.costo).slice(0, 4) }; });
+    const W = Math.max(300, box.clientWidth), H = 250, m = { t: 26, r: 8, b: 26, l: 44 };
+    const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`);
+    const x = d3.scaleBand(lunes, [m.l, W - m.r]).padding(0.16);
+    const y = d3.scaleLinear([0, d3.max(rows, (r) => r.total) * 1.1], [H - m.b, m.t]).nice();
+    svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(4).tickSize(-(W - m.l - m.r)).tickFormat((v) => '$' + v + ' M')).call(C.axisClean).call((g) => { g.select('.domain').remove(); g.selectAll('.tick line').attr('stroke', 'var(--cds-chart-grid)'); });
+    const step = Math.ceil(lunes.length / Math.max(1, Math.floor((W - m.l - m.r) / 58)));
+    const iSel = lunes.indexOf(lunSel);
+    const ver = (i) => i === iSel || (i % step === 0 && Math.abs(i - iSel) >= step);
+    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickFormat((l, i) => ver(i) ? fechaCorta(l) : '')).call(C.axisClean).call((g) => g.selectAll('line').remove());
+    svg.selectAll('.tick text').filter((l) => l === lunSel).style('font-weight', 700).attr('fill', 'var(--tinta)');
+    svg.append('g').selectAll('rect').data(rows).join('rect').attr('x', (r) => x(r.lunes)).attr('width', x.bandwidth()).attr('y', (r) => y(r.total)).attr('height', (r) => y(0) - y(r.total)).attr('rx', 3)
+      .attr('fill', (r) => r.lunes === lunSel ? '#1A5632' : fuente.get(r.lunes) === 'App' ? '#7FB08A' : '#A9BBC6');
+    const corte = lunes.find((l) => fuente.get(l) === 'App');
+    if (corte) {
+      const xc = x(corte) - x.step() * x.paddingInner() / 2;
+      svg.append('line').attr('x1', xc).attr('x2', xc).attr('y1', 4).attr('y2', H - m.b).attr('stroke', '#A9BBC6').attr('stroke-width', 2).attr('stroke-dasharray', '5 4');
+      svg.append('text').attr('x', xc + 6).attr('y', 14).attr('fill', 'var(--muted)').style('font-size', '12px').style('font-weight', 600).text(fechaCorta(corte) + ' · arranca la app');
+    }
+    const t = C.tip(box);
+    svg.append('g').selectAll('rect').data(rows).join('rect').attr('x', (r) => x(r.lunes) - x.step() * x.paddingInner() / 2).attr('width', x.step()).attr('y', m.t).attr('height', H - m.t - m.b).attr('fill', 'transparent').style('cursor', 'pointer')
+      .on('mousemove', (ev, r) => C.showTip(box, t, ev, [{ t: `Semana del ${fechaCorta(r.lunes)} · ${fuente.get(r.lunes) === 'App' ? 'app' : 'nómina repartida'}` }, { t: 'Total ' + C.M(r.total) }, ...r.top.map((f) => ({ t: (f.frente_nombre || f.frente) + ' ' + C.M(f.costo / 1e6) }))]))
+      .on('mouseleave', () => { t.hidden = true; })
+      .on('click', (ev, r) => { C.state.sel = null; dash.setParams({ semana: r.lunes, dia: null }); });
+  }
+
+  function drawCostoFrente(lun) {
+    const box = $('ch-costo-frente'); box.replaceChildren();
+    if (!ok('historico_frente')) return;
+    const rows = D('historico_frente').filter((r) => r.lunes === lun && r.costo > 0).sort((a, b) => b.costo - a.costo).slice(0, 10);
+    $('titulo-costo-frente').textContent = 'Costo por frente';
+    if (!rows.length) { box.appendChild(el('p', 'vacio', 'Sin costo esta semana.')); return; }
+    const max = rows[0].costo;
+    rows.forEach((r) => {
+      const g = el('div'); g.style.cssText = 'display:grid;grid-template-columns:minmax(0,150px) minmax(0,1fr) 52px;gap:10px;align-items:center;font-size:14px;margin-bottom:8px';
+      const n = el('span', '', (r.frente_nombre || r.frente)); n.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis'; n.title = r.frente_nombre || r.frente;
+      const tr = el('span'); tr.style.cssText = 'height:18px;background:var(--linea-2);border-radius:5px;overflow:hidden;display:block';
+      const i = el('i'); i.style.cssText = `display:block;height:100%;border-radius:5px;width:${Math.round(r.costo / max * 100)}%;background:${r.frente === 'SF' ? '#C9D3CB' : r.fuente === 'App' ? 'var(--verde)' : 'var(--gris-azul)'}`; tr.appendChild(i);
+      const v = el('b', '', C.H(Math.round(r.costo / 1e5) / 10)); v.style.textAlign = 'right';
+      g.appendChild(n); g.appendChild(tr); g.appendChild(v); box.appendChild(g);
+    });
+  }
+
+  function drawSemanas(lunSel) {
+    const box = $('ch-semanas'); box.querySelectorAll('svg,.legend').forEach((e) => e.remove());
+    if (!ok('semanas')) return;
+    const rows = D('semanas').filter((r) => r.fuente === 'App' && r.extra != null);
+    if (!rows.length) return;
+    const lg = el('div', 'legend'); [['#C98A12', 'Horas extra'], ['#3D6E8C', 'No presupuestadas']].forEach(([c, t]) => { const s = el('span'); const sw = el('i', 'sw'); sw.style.background = c; s.appendChild(sw); s.appendChild(document.createTextNode(t)); lg.appendChild(s); }); box.prepend(lg);
+    const W = Math.max(280, box.clientWidth), H = 210, m = { t: 12, r: 12, b: 26, l: 40 };
+    const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`);
+    const x = d3.scalePoint(rows.map((r) => r.lunes), [m.l + 8, W - m.r - 8]);
+    const y = d3.scaleLinear([0, Math.max(0.5, d3.max(rows, (r) => Math.max(r.extra, r.np)) * 1.1)], [H - m.b, m.t]);
+    svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(4).tickSize(-(W - m.l - m.r)).tickFormat((v) => Math.round(v * 100) + ' %')).call(C.axisClean).call((g) => { g.select('.domain').remove(); g.selectAll('.tick line').attr('stroke', 'var(--cds-chart-grid)'); });
+    const step = Math.ceil(rows.length / Math.max(1, Math.floor((W - m.l - m.r) / 54)));
+    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickFormat((l, i) => i % step ? '' : fechaCorta(l))).call(C.axisClean).call((g) => g.selectAll('line').remove());
+    [['extra', '#C98A12'], ['np', '#3D6E8C']].forEach(([k, c]) => {
+      svg.append('path').datum(rows).attr('d', d3.line().x((r) => x(r.lunes)).y((r) => y(r[k]))).attr('fill', 'none').attr('stroke', c).attr('stroke-width', 2.5).attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round');
+      svg.append('g').selectAll('circle').data(rows).join('circle').attr('cx', (r) => x(r.lunes)).attr('cy', (r) => y(r[k])).attr('r', (r) => r.lunes === lunSel ? 5.5 : 3).attr('fill', c);
+    });
+    const t = C.tip(box); const bw = rows.length > 1 ? x.step() : W;
+    svg.append('g').selectAll('rect').data(rows).join('rect').attr('x', (r) => x(r.lunes) - bw / 2).attr('width', bw).attr('y', m.t).attr('height', H - m.t - m.b).attr('fill', 'transparent')
+      .on('mousemove', (ev, r) => C.showTip(box, t, ev, [{ t: 'Semana del ' + fechaCorta(r.lunes) + (r.dias < 6 ? ' (parcial)' : '') }, { t: 'Horas extra ' + C.P(r.extra), c: '#C98A12' }, { t: 'No presupuestadas ' + C.P(r.np), c: '#3D6E8C' }]))
+      .on('mouseleave', () => { t.hidden = true; });
+  }
+
+  // ===================== GERENCIA =====================
+  function drawGer() {
+    if (!ok('indicadores_gerencia')) return;
+    const v = Object.fromEntries(D('indicadores_gerencia').map((r) => [r.indicador, r.valor]));
+    const F = ok('frentes_gerencia') ? D('frentes_gerencia') : [];
+    const meta = D('meta') || {};
+    const rojos = F.filter((f) => f.sem === 'Rojo');
+    $('ger-eyebrow').textContent = `Corte ${meta.generado ? fechaCorta(meta.generado.slice(0, 10)) : ''} · lo que hay que decidir`;
+    $('lead-ger').textContent = `Hay ${C.K(v.ejecutado_sin_cobrar)} ejecutados sin cobrar y ${C.K(v.sub_sin_cobrar)} pagados a subcontratistas por obra que AIRPLAN aún no paga. ` +
+      (rojos.length ? `${rojos.length} frente${rojos.length === 1 ? ' está' : 's están'} en rojo.` : 'Ningún frente en rojo.');
+    // dinero en riesgo
+    const rz = $('riesgo'); rz.replaceChildren();
+    const card = (label, valor, frac, color, nota, nivel) => {
+      const c = el('div', 'rc'); const t = el('div', 't'); t.appendChild(el('span', '', label)); t.appendChild(pill(nivel === 'Alta' ? 'alta' : nivel === 'Media' ? 'media' : 'baja', nivel)); c.appendChild(t);
+      c.appendChild(el('span', 'v', valor)); const b = el('span', 'bar'); const i = el('i'); i.style.width = Math.max(1, Math.min(100, Math.round((frac || 0) * 100))) + '%'; i.style.background = color; b.appendChild(i); c.appendChild(b);
+      c.appendChild(el('span', 'muted', nota)); c.lastChild.style.fontSize = '14px'; return c;
+    };
+    rz.appendChild(card('Ejecutado sin cobrar', C.K(v.ejecutado_sin_cobrar), v.cobrado / v.ejecutado, 'var(--verde)', `Cobrado el ${C.P(v.cobrado / v.ejecutado)} de lo ejecutado según la curva S`, v.ejecutado_sin_cobrar > 5000 ? 'Alta' : 'Media'));
+    rz.appendChild(card('Pagado a subcontratistas sin cobrar', C.K(v.sub_sin_cobrar), v.sub_sin_cobrar / v.sub_pagado, 'var(--ambar)', `Del total pagado a subcontratistas (${C.K(v.sub_pagado)})`, v.sub_sin_cobrar > 1000 ? 'Alta' : 'Media'));
+    rz.appendChild(card('Contratado por encima de SINCO', C.K(v.sub_sobre_sinco), v.sub_sobre_sinco / v.sub_contratado, 'var(--ambar)', `${C.N(v.sub_lineas_sobre)} líneas de contrato sobre el valor de la actividad`, 'Media'));
+    if (v.anticipo_por_amortizar != null) rz.appendChild(card('Anticipos por amortizar', C.K(v.anticipo_por_amortizar), v.anticipo_por_amortizar / v.anticipo_girado, 'var(--rojo)', `De ${C.K(v.anticipo_girado)} girados; amortizado ${C.K(v.anticipo_amortizado)}`, 'Media'));
+    // alertas
+    const SIG = { cobro: 'CO', sub: 'SC', mo: 'MO', adm: 'AD', act: 'AC', eq: 'EQ', he: 'HE' };
+    const ag = $('alertas-ger'); ag.replaceChildren();
+    (ok('alertas_gerencia') ? D('alertas_gerencia') : []).forEach((a) => {
+      const d = el('article', 'al ' + a.nivel);
+      const hd = el('div', 'hd'); hd.appendChild(el('span', 'sig', SIG[a.id] || a.tema.slice(0, 2).toUpperCase())); hd.appendChild(el('span', 'tema', a.tema)); hd.appendChild(pill(a.nivel, a.nivel === 'alta' ? 'Alta' : a.nivel === 'media' ? 'Media' : 'Baja')); d.appendChild(hd);
+      const cf = el('div', 'cf'); cf.appendChild(el('b', '', a.cifra)); cf.appendChild(el('span', '', a.titulo)); d.appendChild(cf);
+      d.appendChild(el('p', '', a.detalle));
+      const ac = el('div', 'acc'); const b = el('b', '', 'Qué hacer: '); ac.appendChild(b); ac.appendChild(document.createTextNode(a.accion)); d.appendChild(ac);
+      ag.appendChild(d);
+    });
+    // semáforo
+    const ft = $('ftiles'); ft.replaceChildren();
+    const o = { Rojo: 0, Amarillo: 1, Verde: 2, 'Sin dato': 3 };
+    const COL = { Rojo: 'var(--rojo)', Amarillo: 'var(--ambar)', Verde: 'var(--verde)', 'Sin dato': 'var(--gris)' };
+    F.filter((f) => (f.venta || 0) > 0).sort((a, b) => o[a.sem] - o[b.sem] || (b.venta - a.venta)).forEach((f) => {
+      const b = el('button', 'ft ' + f.sem.split(' ')[0]); b.type = 'button'; b.setAttribute('aria-expanded', String(C.state.frente === f.f));
+      const h = el('div', 'h'); const i = el('i'); i.style.background = COL[f.sem]; h.appendChild(i); h.appendChild(el('b', '', f.frente)); const sm_ = el('small', '', f.sem); sm_.style.color = COL[f.sem]; h.appendChild(sm_); b.appendChild(h);
+      const bars = el('div', 'bars');
+      [[f.pct_ej, 'var(--verde)'], [f.pct_cob, 'var(--menta)']].forEach(([p, c]) => { const s = el('span'); const ii = el('i'); ii.style.width = Math.round(Math.min(1, p || 0) * 100) + '%'; ii.style.background = c; s.appendChild(ii); bars.appendChild(s); });
+      b.appendChild(bars);
+      const nota = f.decidir ? f.decidir.split(/(?<=\.)\s/)[0] : `Ejecutado ${C.P(f.pct_ej)} · cobrado ${C.P(f.pct_cob)}`;
+      b.appendChild(el('span', 'nt', nota.length > 110 ? nota.slice(0, 108) + '…' : nota));
+      b.addEventListener('click', () => { C.state.frente = C.state.frente === f.f ? null : f.f; redraw(); });
+      ft.appendChild(b);
+    });
+    const fd = $('fdet'); const fs = F.find((f) => f.f === C.state.frente);
+    fd.hidden = !fs; fd.replaceChildren();
+    if (fs) {
+      const t = el('div'); const b = el('b', '', fs.frente + ' · ' + (fs.residente || '')); t.appendChild(b); fd.appendChild(t);
+      fd.appendChild(el('div', '', `Venta ${C.K(fs.venta)} · ejecutado ${C.K(fs.ejecutado)} (${C.P(fs.pct_ej)}) · cobrado ${C.K(fs.cobrado)} (${C.P(fs.pct_cob)}) · ejecutado sin cobrar ${C.K(fs.ejec_sin_cobrar)}`));
+      fd.appendChild(el('div', '', `Nómina propia ${C.K(fs.mo_real)} frente a ${C.K(fs.mo_meta)} que corresponde a lo ejecutado (${C.P(fs.pct_gastado)}) · sobre APU ${C.K(fs.sobre_apu)} · sobre SINCO ${C.K(fs.contr_sobre)} · subcontratos pagados sin cobrar ${C.K(fs.sub_sin_cobrar)}`));
+      const q = el('div'); const qb = el('b', '', 'Qué decidir: '); q.appendChild(qb); q.appendChild(document.createTextNode(fs.decidir || 'Sin alertas.')); fd.appendChild(q);
+    }
+    drawCobro(); drawMO(); drawMaestros(v); drawEquipos();
+    // tablas
+    const ta = $('tb-act').querySelector('tbody'); ta.replaceChildren();
+    D('actividades_sobre_apu').slice().sort((a, b) => b.exceso - a.exceso).slice(0, 15).forEach((a) => fila(ta, [a.cod, a.desc, C.K(a.nomina), C.K(a.apu), C.K(a.exceso)], [2, 3, 4]));
+    const tsb = $('tb-sub').querySelector('tbody'); tsb.replaceChildren();
+    D('subcontratistas').forEach((s) => fila(tsb, [s.c, C.K(s.contratado), C.P(s.pct), C.K(s.sobre), C.K(s.sin_cobrar)], [1, 2, 3, 4]));
+  }
+
+  const fmtK = (v) => { const a = Math.abs(v); return a >= 1000 ? d3.format(',.0f')(v / 1000).replace(/,/g, '.') + ' mil M' : d3.format(',.0f')(v * 1000).replace(/,/g, '.'); };
+  function marco(box, H, m, xDom, yMax, fmtY, band) {
+    box.querySelectorAll('svg').forEach((e) => e.remove());
+    const W = Math.max(280, box.clientWidth);
+    const svg = d3.select(box).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`);
+    const y = d3.scaleLinear([0, yMax * 1.08], [H - m.b, m.t]).nice();
+    const pr = svg.append('text').style('font-size', '13px').text(fmtY(y.domain()[1])); m.l = Math.max(m.l, pr.node().getComputedTextLength() + 10); pr.remove();
+    const x = band ? d3.scaleBand(xDom, [m.l, W - m.r]).padding(0.25) : d3.scalePoint(xDom, [m.l + 6, W - m.r - 6]);
+    svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(4).tickSize(-(W - m.l - m.r)).tickFormat(fmtY)).call(C.axisClean).call((g) => { g.select('.domain').remove(); g.selectAll('.tick line').attr('stroke', 'var(--cds-chart-grid)'); });
+    return { svg, x, y, W };
+  }
+  const leyenda = (box, items) => { box.querySelectorAll('.legend').forEach((e) => e.remove()); const l = el('div', 'legend'); items.forEach(([c, t, linea]) => { const s = el('span'); const i = el('i', 'sw'); i.style.background = c; if (linea) i.style.height = '3px'; s.appendChild(i); s.appendChild(document.createTextNode(t)); l.appendChild(s); }); box.prepend(l); };
+
+  function drawCobro() {
+    const box = $('ch-cobro'); if (!ok('cobro_semana')) return;
+    const rows = D('cobro_semana');
+    const ult = rows.filter((r) => r.ejecutado != null).slice(-1)[0] || {};
+    const ultC = rows.filter((r) => r.cobrado != null).slice(-1)[0] || {};
+    const ser = [['programado', 'Programado', '#A9BBC6'], ['ejecutado', 'Ejecutado', '#1A5632'], ['cobrado', 'Cobrado', '#C98A12']];
+    leyenda(box, ser.map(([k, n, c]) => [c, `${n} ${C.K((k === 'programado' ? ult : k === 'cobrado' ? ultC : ult)[k])}`, true]));
+    const { svg, x, y } = marco(box, 250, { t: 14, r: 14, b: 26, l: 40 }, rows.map((r) => r.semana), d3.max(rows, (r) => r.programado), fmtK, false);
+    const step = Math.ceil(rows.length / 7);
+    svg.append('g').attr('transform', `translate(0,${250 - 26})`).call(d3.axisBottom(x).tickFormat((s, i) => i % step ? '' : fechaCorta(s))).call(C.axisClean).call((g) => g.selectAll('line').remove());
+    ser.forEach(([k, , c]) => {
+      const pts = rows.filter((r) => r[k] != null);
+      svg.append('path').datum(pts).attr('d', d3.line().x((r) => x(r.semana)).y((r) => y(r[k]))).attr('fill', 'none').attr('stroke', c).attr('stroke-width', 3).attr('stroke-linecap', 'round').attr('stroke-linejoin', 'round').attr('stroke-dasharray', k === 'programado' ? '6 4' : null);
+    });
+    if (ult.semana && ultC.cobrado != null) {
+      const xx = x(ult.semana);
+      svg.append('line').attr('x1', xx).attr('x2', xx).attr('y1', y(ult.ejecutado)).attr('y2', y(ultC.cobrado)).attr('stroke', '#B3261E').attr('stroke-width', 2).attr('stroke-dasharray', '4 3');
+      svg.append('text').attr('x', xx + 8).attr('y', (y(ult.ejecutado) + y(ultC.cobrado)) / 2 + 4).attr('text-anchor', 'start').attr('fill', '#B3261E').attr('stroke', '#fff').attr('stroke-width', 4).attr('paint-order', 'stroke').style('font-size', '12px').style('font-weight', 700).text(C.K(ult.ejecutado - ultC.cobrado) + ' sin cobrar');
+    }
+    const t = C.tip(box);
+    svg.append('g').selectAll('rect').data(rows).join('rect').attr('x', (r) => x(r.semana) - x.step() / 2).attr('width', x.step()).attr('y', 0).attr('height', 250 - 26).attr('fill', 'transparent')
+      .on('mousemove', (ev, r) => C.showTip(box, t, ev, [{ t: 'Semana del ' + fechaCorta(r.semana) }, ...ser.filter(([k]) => r[k] != null).map(([k, n, c]) => ({ t: n + ' ' + C.K(r[k]), c }))])).on('mouseleave', () => { t.hidden = true; });
+  }
+
+  function drawMO() {
+    const box = $('ch-mo'); if (!ok('mo_nomina_vs_ganada')) return;
+    const rows = D('mo_nomina_vs_ganada');
+    leyenda(box, [['#C98A12', 'Nómina'], ['#1A5632', 'MO ganada por el avance']]);
+    const H = 240, m = { t: 22, r: 10, b: 26, l: 40 };
+    const { svg, x, y } = marco(box, H, m, rows.map((r) => r.mes), d3.max(rows, (r) => Math.max(r.nomina, r.ganada)), (v) => d3.format(',.0f')(v * 1000).replace(/,/g, '.'), true);
+    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickFormat((d) => C.mesN(d))).call(C.axisClean).call((g) => g.selectAll('line').remove());
+    const x1 = d3.scaleBand(['nomina', 'ganada'], [0, x.bandwidth()]).padding(0.1);
+    const g = svg.append('g').selectAll('g').data(rows).join('g').attr('transform', (r) => `translate(${x(r.mes)},0)`);
+    g.selectAll('rect').data((r) => [['nomina', r.nomina], ['ganada', r.ganada]]).join('rect').attr('x', (q) => x1(q[0])).attr('width', x1.bandwidth()).attr('y', (q) => y(q[1])).attr('height', (q) => y(0) - y(q[1])).attr('rx', 4).attr('fill', (q) => q[0] === 'nomina' ? '#C98A12' : '#1A5632');
+    g.append('text').attr('x', x.bandwidth() / 2).attr('y', (r) => y(Math.max(r.nomina, r.ganada)) - 6).attr('text-anchor', 'middle').style('font-size', '12px').style('font-weight', 700).attr('fill', 'var(--tinta-2)').text((r) => C.P(r.nomina / r.ganada));
+    const t = C.tip(box);
+    g.append('rect').attr('width', x.bandwidth()).attr('y', 0).attr('height', y(0)).attr('fill', 'transparent')
+      .on('mousemove', (ev, r) => C.showTip(box, t, ev, [{ t: C.mesN(r.mes) }, { t: 'Nómina ' + C.K(r.nomina), c: '#C98A12' }, { t: 'Ganada ' + C.K(r.ganada), c: '#1A5632' }])).on('mouseleave', () => { t.hidden = true; });
+  }
+
+  function drawMaestros(v) {
+    const box = $('ch-maestros'); if (!ok('maestros_mes')) return;
+    const rows = D('maestros_mes'); const tope = v.maestros_tope_mes;
+    leyenda(box, [['#C9D3CB', 'Proyectado'], ['#1A5632', 'Real (nómina SINCO)'], ['#B3261E', 'Tope ' + C.K(tope) + ' al mes', true]]);
+    const H = 240, m = { t: 12, r: 10, b: 26, l: 40 };
+    const { svg, x, y } = marco(box, H, m, rows.map((r) => r.mes), d3.max(rows, (r) => Math.max(r.proy || 0, r.real || 0, tope)), (v_) => d3.format(',.0f')(v_ * 1000).replace(/,/g, '.'), true);
+    const step = Math.ceil(rows.length / 7);
+    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickFormat((d, i) => i % step ? '' : C.mesN(d))).call(C.axisClean).call((g) => g.selectAll('line').remove());
+    const x1 = d3.scaleBand(['proy', 'real'], [0, x.bandwidth()]).padding(0.1);
+    const g = svg.append('g').selectAll('g').data(rows).join('g').attr('transform', (r) => `translate(${x(r.mes)},0)`);
+    g.selectAll('rect').data((r) => [['proy', r.proy], ['real', r.real]].filter((q) => q[1] != null)).join('rect').attr('x', (q) => x1(q[0])).attr('width', x1.bandwidth()).attr('y', (q) => y(q[1])).attr('height', (q) => y(0) - y(q[1])).attr('rx', 3).attr('fill', (q) => q[0] === 'proy' ? '#C9D3CB' : '#1A5632');
+    const fut = rows.filter((r) => r.real == null);
+    if (fut.length) svg.append('line').attr('x1', x(fut[0].mes)).attr('x2', x(fut[fut.length - 1].mes) + x.bandwidth()).attr('y1', y(tope)).attr('y2', y(tope)).attr('stroke', '#B3261E').attr('stroke-width', 2).attr('stroke-dasharray', '5 4');
+    const t = C.tip(box);
+    g.append('rect').attr('width', x.bandwidth()).attr('y', 0).attr('height', y(0)).attr('fill', 'transparent')
+      .on('mousemove', (ev, r) => C.showTip(box, t, ev, [{ t: C.mesN(r.mes) }, { t: 'Proyectado ' + C.K(r.proy), c: '#C9D3CB' }, ...(r.real != null ? [{ t: 'Real ' + C.K(r.real), c: '#1A5632' }] : [])])).on('mouseleave', () => { t.hidden = true; });
+  }
+
+  function drawEquipos() {
+    const box = $('equipos'); box.replaceChildren(); if (!ok('equipos_frente')) return;
+    const meses = D('equipos_meses') || [];
+    const rows = D('equipos_frente').filter((r) => (r.real || 0) > 0.5).sort((a, b) => b.real - a.real);
+    const max = Math.max(...rows.map((r) => Math.max(r.real, r.meta || 0)), 1);
+    rows.forEach((r) => {
+      const rel = r.meta ? r.real / r.meta : null; const c = rel != null && rel > 1.2 ? 'var(--rojo)' : 'var(--verde)';
+      const g = el('div'); g.style.cssText = 'display:grid;grid-template-columns:minmax(0,190px) minmax(0,1fr) 82px 52px;gap:10px;align-items:center;font-size:13px';
+      const n = el('span', '', r.frente); n.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis'; n.title = `${r.frente}: facturado ${C.K(r.real)} (${meses.map((m, i) => C.mesN(m) + ' ' + C.K(r['m' + (i + 1)])).join(', ')}); APU ganado ${C.K(r.meta)} de ${C.K(r.ppto)}`;
+      const bs = el('div'); bs.style.cssText = 'display:flex;flex-direction:column;gap:3px';
+      [[r.real, c], [r.meta || 0, 'var(--gris-azul)']].forEach(([vv, cc]) => { const s = el('span'); s.style.cssText = 'height:9px;border-radius:999px;overflow:hidden;display:block;background:var(--linea-2)'; const i = el('i'); i.style.cssText = `display:block;height:100%;width:${Math.max(1, Math.round(vv / max * 100))}%;background:${cc}`; s.appendChild(i); bs.appendChild(s); });
+      const rl = el('b', '', rel != null ? C.P(rel) : '—'); rl.style.cssText = `text-align:right;color:${c}`;
+      const fv = el('span', '', C.K(r.real)); fv.style.cssText = 'text-align:right;font-variant-numeric:tabular-nums';
+      g.appendChild(n); g.appendChild(bs); g.appendChild(fv); g.appendChild(rl); box.appendChild(g);
+    });
+    const lg = el('div', 'legend'); [['var(--verde)', 'Facturado'], ['var(--gris-azul)', 'APU ganado'], ['var(--rojo)', 'Más de 120 %']].forEach(([cc, t]) => { const s = el('span'); const sw = el('i', 'sw'); sw.style.background = cc; s.appendChild(sw); s.appendChild(document.createTextNode(t)); lg.appendChild(s); });
+    box.appendChild(lg);
+  }
+
+  function estado() {
+    const m = D('meta'); if (!m || !m.generado) return;
+    const e = $('estado'); e.replaceChildren();
+    [`App al ${fechaCorta(m.app_hasta)}`, `Nómina SINCO a ${C.mesN(m.nomina_hasta)}`, `Curva S ${fechaCorta(m.curva)}`, `Cobro hasta acta ${m.acta}`, m.sinco ? `SINCO ${fechaCorta(m.sinco)}` : null]
+      .filter(Boolean).forEach((t) => e.appendChild(el('span', '', t)));
+  }
+
+  function redraw() {
+    if (!ok('semanas')) return;
+    estado();
+    if (C.state.vista === 'gerencia') drawGer(); else drawAdmin();
+    window.CO_altura && window.CO_altura();
+  }
+  C.redraw = redraw;
+  dash.onData(redraw);
+})();
+</script>
+
+</body>
+</html>
