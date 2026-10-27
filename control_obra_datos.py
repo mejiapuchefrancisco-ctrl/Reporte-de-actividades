@@ -495,15 +495,7 @@ def datos_gerencia(o, S, H, P_curva, cortes, eq_fact, eq_apu, anticipos, hoy):
                for x in top.itertuples()]
     # cobro: curva S (programado y ejecutado acumulados por semana) y cobrado acumulado por corte
     tot = P_curva[P_curva["fr"] == "TOTAL"].sort_values("semana")
-    cob_acta = {}
-    for col in [c for c in H.columns if str(c).startswith("c") and str(c)[1:].isdigit()]:
-        cob_acta[int(str(col)[1:])] = float(pd.to_numeric(H[col], errors="coerce").fillna(0).sum())
-    fechas = dict(cortes)
-    ult = max(fechas) if fechas else 1
-    for a in sorted(cob_acta):  # actas sin fecha en la pestaña Cortes: días 3 y 24 siguientes
-        if a not in fechas and cob_acta[a] > 0 and fechas:
-            f0 = fechas[max(x for x in fechas if x < a)]
-            fechas[a] = f0.replace(day=24) if f0.day == 3 else (f0 + pd.offsets.MonthBegin(1)).replace(day=3)
+    cob_acta, fechas = _cobro_por_acta(H, cortes)
     cobro = []
     hoy = pd.Timestamp(hoy).normalize()
     for s in tot.itertuples():
@@ -514,6 +506,96 @@ def datos_gerencia(o, S, H, P_curva, cortes, eq_fact, eq_apu, anticipos, hoy):
     return dict(indicadores_gerencia=[dict(indicador=a, valor=b) for a, b in ind], frentes_gerencia=frentes, actividades_sobre_apu=actividades,
                 maestros_mes=maestros_mes, horas_extra_mes=he_mes, mo_nomina_vs_ganada=mo_mes, subcontratistas=sub, equipos_frente=equipos,
                 equipos_meses=meses_eq, cobro_semana=cobro)
+
+
+def _cobro_por_acta(H, cortes, mascara=None):
+    """Cobrado por acta (suma de los hitos; `mascara` filtra los hitos de un frente) y fecha de cada acta.
+    Las actas sin fecha en la pestaña Cortes toman el siguiente día 3 o 24."""
+    Hx = H if mascara is None else H[mascara]
+    cob_acta = {}
+    for col in [c for c in H.columns if str(c).startswith("c") and str(c)[1:].isdigit()]:
+        cob_acta[int(str(col)[1:])] = float(pd.to_numeric(Hx[col], errors="coerce").fillna(0).sum())
+    fechas = dict(cortes)
+    todas = {int(str(c)[1:]): float(pd.to_numeric(H[c], errors="coerce").fillna(0).sum())
+             for c in H.columns if str(c).startswith("c") and str(c)[1:].isdigit()}
+    for a in sorted(todas):
+        if a not in fechas and todas[a] > 0 and fechas:
+            f0 = fechas[max(x for x in fechas if x < a)]
+            fechas[a] = f0.replace(day=24) if f0.day == 3 else (f0 + pd.offsets.MonthBegin(1)).replace(day=3)
+    return cob_acta, fechas
+
+
+def datos_por_frente(o, S, Cs, As, H, P_curva, cortes, mo, hoy):
+    """Las gráficas de gerencia filtradas por frente (al tocar la tarjeta de un frente).
+    - cobro_frente: programado y ejecutado (curva S del frente) y cobrado (hitos del frente) acumulados por semana.
+    - mo_frente: nómina propia de oficiales y ayudantes contra la MO que paga el avance, por mes.
+    - maestros_frente: costo de maestros (nómina SINCO, administración) repartido por las horas de los maestros en el frente según la app;
+      en los meses sin nómina, el estimado de la app.
+    - subcontratistas_frente: por contratista, solo los ítems del frente."""
+    hoy = pd.Timestamp(hoy).normalize()
+    out = dict(cobro_frente=[], mo_frente=[], maestros_frente=[], subcontratistas_frente=[])
+    # ---- cobro por frente
+    Pf = P_curva[(P_curva["fr"] != "TOTAL") & P_curva["fr"].notna()]
+    for f, g in Pf.groupby("fr"):
+        if f not in H["fr"].astype(str).values and g["PV"].max() <= 0:
+            continue
+        cob_acta, fechas = _cobro_por_acta(H, cortes, H["fr"].astype(str) == f)
+        sem = g.groupby("semana")[["PV", "EV"]].sum().sort_index()
+        for s, r in sem.iterrows():
+            if s > hoy + pd.Timedelta(days=70):
+                break
+            c_ = sum(v for a, v in cob_acta.items() if a in fechas and fechas[a] <= s)
+            out["cobro_frente"].append(dict(f=f, semana=str(s.date()), programado=_M(r.PV), ejecutado=_M(r.EV) if r.EV else None,
+                                            cobrado=_M(c_) if s <= hoy + pd.Timedelta(days=6) else None))
+    # ---- MO propia por frente
+    rm, dmeta = o["tendencia_fr"]
+    for f in rm.columns:
+        for mes in rm.index:
+            out["mo_frente"].append(dict(f=f, mes=str(mes), nomina=_M(rm.loc[mes, f]), ganada=_M(dmeta.loc[mes, f])))
+    # ---- maestros por frente
+    ap = mo.dropna(subset=["fecha"]).copy()
+    cargo = ap["cargo"].astype(str).str.lower()
+    ap = ap[cargo.str.contains("maestro") & ~cargo.str.contains("auxiliar") & ap["costo_calculado"].notna()]
+    ap = ap[~ap["actDesc"].astype(str).str.startswith(("[CANTIDAD SEMANAL]", "[NOVEDAD]"))]
+    ap["fr"] = _fr_app(ap)
+    ap["mes"] = ap["fecha"].dt.to_period("M")
+    ap = ap[ap["mes"] >= pd.Period("2026-08", "M")]  # la app registra completo desde el 17-ago
+    pm = ap.pivot_table(index="mes", columns="fr", values="costo_calculado", aggfunc="sum").fillna(0)
+    adm = o["adm_mes"]
+    real_m = adm["real_Maestros"] if "real_Maestros" in adm else pd.Series(dtype=float)
+    for mes in pm.index:
+        fila = pm.loc[mes]; tot = fila.sum()
+        real = real_m.get(mes, np.nan) if mes in real_m.index else np.nan
+        for f, v in fila.items():
+            if v <= 0:
+                continue
+            if pd.notna(real) and tot > 0:
+                out["maestros_frente"].append(dict(f=f, mes=str(mes), real=_M(real * v / tot), estimado=None, pct=_r(v / tot)))
+            else:
+                out["maestros_frente"].append(dict(f=f, mes=str(mes), real=None, estimado=_M(v), pct=_r(v / tot) if tot else None))
+    # ---- subcontratistas por frente (ítems directos del frente)
+    if S is not None and Cs is not None and As is not None:
+        it = S["items"]
+        frc = it["fr"]
+        C2 = Cs.assign(fr=Cs["cod"].map(frc))
+        A2 = As.merge(Cs.drop_duplicates("contrato")[["contrato", "ctta"]], on="contrato", how="left").assign(fr=lambda d: d["cod"].map(frc))
+        con = C2.dropna(subset=["fr"]).groupby(["fr", "ctta"])["base"].sum()
+        pag = A2.dropna(subset=["fr"]).groupby(["fr", "ctta"])["base"].sum()
+        ci = C2[C2["cod"].isin(it.index[it["directo"]])].groupby(["ctta", "cod"])["base"].sum().rename("c").reset_index()
+        ci["peso"] = ci["c"] / ci["cod"].map(ci.groupby("cod")["c"].sum())
+        ci["fr"] = ci["cod"].map(frc)
+        ci["sobre"] = ci["peso"] * ci["cod"].map(it["sobre"])
+        ci["sin_cobrar"] = ci["peso"] * ci["cod"].map(it["sin_cobrar"])
+        ss = ci.groupby(["fr", "ctta"])[["sobre", "sin_cobrar"]].sum()
+        T = pd.DataFrame({"contratado": con, "pagado": pag}).join(ss, how="outer").fillna(0).reset_index()
+        T = T[(T["fr"] != "—") & ((T["contratado"] > 0) | (T["pagado"] > 0))]
+        T["peso"] = T["sobre"] + T["sin_cobrar"]
+        for f, g in T.groupby("fr"):
+            for x in g.sort_values(["peso", "contratado"], ascending=False).head(12).itertuples():
+                out["subcontratistas_frente"].append(dict(f=f, c=x.ctta, contratado=_M(x.contratado), pagado=_M(x.pagado),
+                                                          pct=_r(x.pagado / x.contratado, 2) if x.contratado > 0 else None,
+                                                          sobre=_M(x.sobre), sin_cobrar=_M(x.sin_cobrar)))
+    return out
 
 
 def a_miles(t):
@@ -567,6 +649,7 @@ def construir(fuentes, mo_raw, hoy=None, recargos=None, eq_fact=None, eq_apu=Non
     adm = datos_administrador(mo, ma, excluidos, Hs, ini_app, hoy)
     adm["semanas"] = _personas_nomina(Rb, adm["semanas"])
     ger = datos_gerencia(o, S, H, Pc, L["cortes"], eq_fact, eq_apu, anticipos, hoy)
+    ger.update(datos_por_frente(o, S, L["Cs"], L["As"], H, Pc, L["cortes"], mo, hoy))
     ct = o["cortes"]
     meta = dict(generado=str(hoy)[:16], nomina_hasta=str(ct["nomina"]), curva=str(pd.Timestamp(ct["curva"]).date()), acta=int(ct["acta"]),
                 app_hasta=str(mo["fecha"].max().date()), inicio_app=str(ini_app.date()),
