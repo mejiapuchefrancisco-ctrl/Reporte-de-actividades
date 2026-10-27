@@ -188,6 +188,12 @@ tr.sel td { background: var(--verde-suave); }
 .ft .nt { font-size: 13px; color: var(--tinta-2); }
 .fdet { background: var(--fondo); border-radius: 14px; padding: 14px 16px; font-size: 14px; line-height: 1.5; display: flex; flex-direction: column; gap: 6px; }
 .fdet b { font-weight: 700; }
+.filtro-fr { position: sticky; top: 8px; z-index: 6; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--verde-osc); color: #fff; border-radius: 12px; padding: 10px 14px; font-size: 15px; box-shadow: 0 4px 14px rgba(18,61,36,.18); }
+.filtro-fr span { flex: 1; min-width: 200px; }
+.filtro-fr b { font-weight: 700; }
+.filtro-fr button { min-height: 40px; border: 1.5px solid rgba(255,255,255,.7); background: transparent; color: #fff; border-radius: 10px; padding: 0 14px; font: inherit; font-weight: 700; cursor: pointer; }
+.filtro-fr button:hover { background: rgba(255,255,255,.12); }
+.vacio-ch { color: var(--tinta-2); font-size: 14px; padding: 24px 4px; }
 .chart { position: relative; min-height: 220px; }
 .tt { position: absolute; pointer-events: none; background: #fff; border: 1px solid var(--linea); border-radius: 12px; box-shadow: var(--cds-shadow-popover); padding: 8px 10px; font-size: 13px; white-space: nowrap; z-index: 5; }
 .tt .h { color: var(--muted); }
@@ -336,26 +342,26 @@ tr.sel td { background: var(--verde-suave); }
       <div class="card" id="card-frentes">
         <div class="head-row">
           <h2>Semáforo por frente</h2>
-          <div class="legend"><span><i class="sw" style="background:var(--verde)"></i>Ejecutado</span><span><i class="sw" style="background:var(--menta)"></i>Cobrado</span><span>Toque un frente para ver qué decidir</span></div>
+          <div class="legend"><span><i class="sw" style="background:var(--verde)"></i>Ejecutado</span><span><i class="sw" style="background:var(--menta)"></i>Cobrado</span><span>Toque un frente para ver qué decidir y filtrar las gráficas</span></div>
         </div>
         <div class="ftiles" id="ftiles"></div>
         <div class="fdet" id="fdet" hidden></div>
       </div>
+      <div class="filtro-fr" id="filtro-fr" hidden><span id="filtro-fr-txt"></span><button type="button" id="filtro-fr-quitar">Ver toda la obra</button></div>
       <div class="grid2">
-        <div class="card" id="card-cobro"><h2>Programado, ejecutado y cobrado</h2><p class="sub">Acumulado por semana. Curva S y cortes cobrados a AIRPLAN.</p><div class="chart" id="ch-cobro"></div></div>
-        <div class="card" id="card-mo"><h2>Nómina propia vs MO que paga el avance</h2><p class="sub">Oficiales y ayudantes en actividades, por mes. Arriba de cada mes: nómina ÷ ganada.</p><div class="chart" id="ch-mo"></div></div>
-        <div class="card" id="card-maestros-mes"><h2>Maestros: proyectado, real y tope</h2><p class="sub">Administración (A). La línea es el tope mensual para cerrar dentro del presupuesto.</p><div class="chart" id="ch-maestros"></div></div>
-        <div class="card" id="card-equipos"><h2>Equipos: facturado vs lo que reconoce el APU</h2><p class="sub">Facturado frente al componente de equipo del APU según lo ejecutado. A la derecha, facturado sobre ganado.</p><div id="equipos" style="display:flex;flex-direction:column;gap:10px"></div></div>
+        <div class="card" id="card-cobro"><h2>Programado, ejecutado y cobrado</h2><p class="sub" id="s-cobro">Acumulado por semana. Curva S y cortes cobrados a AIRPLAN.</p><div class="chart" id="ch-cobro"></div></div>
+        <div class="card" id="card-mo"><h2>Nómina propia vs MO que paga el avance</h2><p class="sub" id="s-mo">Oficiales y ayudantes en actividades, por mes. Arriba de cada mes: nómina ÷ ganada.</p><div class="chart" id="ch-mo"></div></div>
+        <div class="card" id="card-maestros-mes"><h2 id="t-maestros">Maestros: proyectado, real y tope</h2><p class="sub" id="s-maestros">Administración (A). La línea es el tope mensual para cerrar dentro del presupuesto.</p><div class="chart" id="ch-maestros"></div></div>
+        <div class="card" id="card-equipos"><h2>Equipos: facturado vs lo que reconoce el APU</h2><p class="sub" id="s-equipos">Facturado frente al componente de equipo del APU según lo ejecutado. A la derecha, facturado sobre ganado.</p><div id="equipos" style="display:flex;flex-direction:column;gap:10px"></div></div>
       </div>
       <div class="grid2">
-        <div class="card" id="card-act"><h2>Actividades con nómina por encima del APU</h2><p class="sub">Las de mayor exceso.</p><div class="scroll"><table id="tb-act"><thead><tr><th>Código</th><th>Actividad</th><th class="n">Nómina</th><th class="n">MO APU</th><th class="n">Exceso</th></tr></thead><tbody></tbody></table></div></div>
-        <div class="card" id="card-sub"><h2>Subcontratistas a revisar</h2><p class="sub">Por contratado sobre SINCO más pagado sin cobrar.</p><div class="scroll"><table id="tb-sub"><thead><tr><th>Subcontratista</th><th class="n">Contratado</th><th class="n">Pagado</th><th class="n">Sobre SINCO</th><th class="n">Sin cobrar</th></tr></thead><tbody></tbody></table></div></div>
+        <div class="card" id="card-act"><h2>Actividades con nómina por encima del APU</h2><p class="sub" id="s-act">Las de mayor exceso.</p><div class="scroll"><table id="tb-act"><thead><tr><th>Código</th><th>Actividad</th><th class="n">Nómina</th><th class="n">MO APU</th><th class="n">Exceso</th></tr></thead><tbody></tbody></table></div></div>
+        <div class="card" id="card-sub"><h2>Subcontratistas a revisar</h2><p class="sub" id="s-sub">Por contratado sobre SINCO más pagado sin cobrar.</p><div class="scroll"><table id="tb-sub"><thead><tr><th>Subcontratista</th><th class="n">Contratado</th><th class="n">Pagado</th><th class="n">Sobre SINCO</th><th class="n">Sin cobrar</th></tr></thead><tbody></tbody></table></div></div>
       </div>
       <p class="note" id="nota-ger">Fuentes: nómina SINCO (BD_Nomina_MO) y el mes en curso estimado con la app; curva S; cuadro de hitos y cortes; SINCO contratos y actas; relación de pagos (anticipos); relaciones de equipos alquilados contra factura; APU del presupuesto de trabajo.</p>
     </section>
   </div>
 </div>
-
 <script>
 // ---------------- datos y conexión con Streamlit ----------------
 // La página recibe todos los conjuntos de datos desde Python (control_obra_datos.construir) y los
@@ -1211,15 +1217,36 @@ dash.calc('alertas_gerencia', {
       fd.appendChild(el('div', '', `Nómina propia ${C.K(fs.mo_real)} frente a ${C.K(fs.mo_meta)} que corresponde a lo ejecutado (${C.P(fs.pct_gastado)}) · sobre APU ${C.K(fs.sobre_apu)} · sobre SINCO ${C.K(fs.contr_sobre)} · subcontratos pagados sin cobrar ${C.K(fs.sub_sin_cobrar)}`));
       const q = el('div'); const qb = el('b', '', 'Qué decidir: '); q.appendChild(qb); q.appendChild(document.createTextNode(fs.decidir || 'Sin alertas.')); fd.appendChild(q);
     }
-    seguro(drawCobro); seguro(drawMO); seguro(() => drawMaestros(v)); seguro(drawEquipos);
+    // filtro por frente: al tocar una tarjeta, las gráficas y tablas de abajo muestran solo ese frente
+    const fb = $('filtro-fr'); fb.hidden = !fs;
+    if (fs) {
+      const tx = $('filtro-fr-txt'); tx.replaceChildren(document.createTextNode('Gráficas del frente '));
+      tx.appendChild(el('b', '', fs.frente)); tx.appendChild(document.createTextNode(fs.residente ? ' · ' + fs.residente : ''));
+    }
+    $('filtro-fr-quitar').onclick = () => { C.state.frente = null; redraw(); };
+    const fr = fs ? fs.f : null;
+    const SUB = {
+      's-cobro': fr ? 'Acumulado por semana. Curva S del frente y lo cobrado en sus hitos.' : 'Acumulado por semana. Curva S y cortes cobrados a AIRPLAN.',
+      's-mo': fr ? 'Oficiales y ayudantes en actividades del frente, por mes. Arriba de cada mes: nómina ÷ ganada.' : 'Oficiales y ayudantes en actividades, por mes. Arriba de cada mes: nómina ÷ ganada.',
+      's-equipos': fr ? 'Facturado al frente cada mes y lo que reconoce el APU de equipo según lo ejecutado del frente.' : 'Facturado frente al componente de equipo del APU según lo ejecutado. A la derecha, facturado sobre ganado.',
+      's-act': fr ? 'Las de mayor exceso en este frente.' : 'Las de mayor exceso.',
+      's-sub': fr ? 'Contratos de este frente, por contratado sobre SINCO más pagado sin cobrar.' : 'Por contratado sobre SINCO más pagado sin cobrar.',
+    };
+    Object.entries(SUB).forEach(([id, t]) => { $(id).textContent = t; });
+    seguro(() => drawCobro(fr)); seguro(() => drawMO(fr)); seguro(() => drawMaestros(v, fr)); seguro(() => drawEquipos(fr));
     // tablas
     const ta = $('tb-act').querySelector('tbody'); ta.replaceChildren();
-    D('actividades_sobre_apu').slice().sort((a, b) => b.exceso - a.exceso).slice(0, 15).forEach((a) => fila(ta, [a.cod, a.desc, C.K(a.nomina), C.K(a.apu), C.K(a.exceso)], [2, 3, 4]));
+    const acts = D('actividades_sobre_apu').filter((a) => !fr || a.f === fr || String(a.cod).startsWith(fr + '.'));
+    acts.slice().sort((a, b) => b.exceso - a.exceso).slice(0, 15).forEach((a) => fila(ta, [a.cod, a.desc, C.K(a.nomina), C.K(a.apu), C.K(a.exceso)], [2, 3, 4]));
+    if (!acts.length) fila(ta, ['', 'Ninguna actividad del frente con nómina por encima del APU.', '', '', ''], []);
     const tsb = $('tb-sub').querySelector('tbody'); tsb.replaceChildren();
-    D('subcontratistas').forEach((s) => fila(tsb, [s.c, C.K(s.contratado), C.P(s.pct), C.K(s.sobre), C.K(s.sin_cobrar)], [1, 2, 3, 4]));
+    const subs = fr ? (ok('subcontratistas_frente') ? D('subcontratistas_frente').filter((s) => s.f === fr) : []) : D('subcontratistas');
+    subs.forEach((s) => fila(tsb, [s.c, C.K(s.contratado), s.pct == null ? '—' : C.P(s.pct), C.K(s.sobre), C.K(s.sin_cobrar)], [1, 2, 3, 4]));
+    if (!subs.length) fila(tsb, ['Sin contratos de subcontratistas en este frente.', '', '', '', ''], []);
   }
+  const sinDatos = (box, txt) => { box.querySelectorAll('svg,.legend,.vacio-ch').forEach((e) => e.remove()); box.appendChild(el('p', 'vacio-ch', txt)); };
 
-  const fmtK = (v) => { const a = Math.abs(v); return a >= 1000 ? d3.format(',.0f')(v / 1000).replace(/,/g, '.') + ' mil M' : d3.format(',.0f')(v * 1000).replace(/,/g, '.'); };
+  const fmtK = (v) => { const a = Math.abs(v); return a >= 1000 ? d3.format(',.1~f')(v / 1000).replace(/,/g, '#').replace('.', ',').replace(/#/g, '.') + ' mil M' : d3.format(',.0f')(v * 1000).replace(/,/g, '.'); };
   function marco(box, H, m, xDom, yMax, fmtY, band) {
     box.querySelectorAll('svg').forEach((e) => e.remove());
     const W = Math.max(280, box.clientWidth);
@@ -1232,14 +1259,16 @@ dash.calc('alertas_gerencia', {
   }
   const leyenda = (box, items) => { box.querySelectorAll('.legend').forEach((e) => e.remove()); const l = el('div', 'legend'); items.forEach(([c, t, linea]) => { const s = el('span'); const i = el('i', 'sw'); i.style.background = c; if (linea) i.style.height = '3px'; s.appendChild(i); s.appendChild(document.createTextNode(t)); l.appendChild(s); }); box.prepend(l); };
 
-  function drawCobro() {
+  function drawCobro(fr) {
     const box = $('ch-cobro'); if (!ok('cobro_semana')) return;
-    const rows = D('cobro_semana');
+    box.querySelectorAll('.vacio-ch').forEach((e) => e.remove());
+    const rows = fr ? (ok('cobro_frente') ? D('cobro_frente').filter((r) => r.f === fr) : []) : D('cobro_semana');
+    if (!rows.length || !d3.max(rows, (r) => Math.max(r.programado || 0, r.ejecutado || 0, r.cobrado || 0))) { sinDatos(box, 'Este frente no tiene curva S ni hitos cobrados.'); return; }
     const ult = rows.filter((r) => r.ejecutado != null).slice(-1)[0] || {};
     const ultC = rows.filter((r) => r.cobrado != null).slice(-1)[0] || {};
     const ser = [['programado', 'Programado', '#A9BBC6'], ['ejecutado', 'Ejecutado', '#1A5632'], ['cobrado', 'Cobrado', '#C98A12']];
     leyenda(box, ser.map(([k, n, c]) => [c, `${n} ${C.K((k === 'programado' ? ult : k === 'cobrado' ? ultC : ult)[k])}`, true]));
-    const { svg, x, y } = marco(box, 250, { t: 14, r: 14, b: 26, l: 40 }, rows.map((r) => r.semana), d3.max(rows, (r) => r.programado), fmtK, false);
+    const { svg, x, y } = marco(box, 250, { t: 14, r: 14, b: 26, l: 40 }, rows.map((r) => r.semana), d3.max(rows, (r) => Math.max(r.programado || 0, r.ejecutado || 0, r.cobrado || 0)), fmtK, false);
     const step = Math.ceil(rows.length / 7);
     svg.append('g').attr('transform', `translate(0,${250 - 26})`).call(d3.axisBottom(x).tickFormat((s, i) => i % step ? '' : fechaCorta(s))).call(C.axisClean).call((g) => g.selectAll('line').remove());
     ser.forEach(([k, , c]) => {
@@ -1256,9 +1285,11 @@ dash.calc('alertas_gerencia', {
       .on('mousemove', (ev, r) => C.showTip(box, t, ev, [{ t: 'Semana del ' + fechaCorta(r.semana) }, ...ser.filter(([k]) => r[k] != null).map(([k, n, c]) => ({ t: n + ' ' + C.K(r[k]), c }))])).on('mouseleave', () => { t.hidden = true; });
   }
 
-  function drawMO() {
+  function drawMO(fr) {
     const box = $('ch-mo'); if (!ok('mo_nomina_vs_ganada')) return;
-    const rows = D('mo_nomina_vs_ganada');
+    box.querySelectorAll('.vacio-ch').forEach((e) => e.remove());
+    const rows = fr ? (ok('mo_frente') ? D('mo_frente').filter((r) => r.f === fr) : []) : D('mo_nomina_vs_ganada');
+    if (!rows.length || !d3.max(rows, (r) => Math.max(r.nomina || 0, r.ganada || 0))) { sinDatos(box, 'Sin nómina propia de oficiales y ayudantes ni avance en este frente.'); return; }
     leyenda(box, [['#C98A12', 'Nómina'], ['#1A5632', 'MO ganada por el avance']]);
     const H = 240, m = { t: 22, r: 10, b: 26, l: 40 };
     const { svg, x, y } = marco(box, H, m, rows.map((r) => r.mes), d3.max(rows, (r) => Math.max(r.nomina, r.ganada)), (v) => d3.format(',.0f')(v * 1000).replace(/,/g, '.'), true);
@@ -1266,14 +1297,41 @@ dash.calc('alertas_gerencia', {
     const x1 = d3.scaleBand(['nomina', 'ganada'], [0, x.bandwidth()]).padding(0.1);
     const g = svg.append('g').selectAll('g').data(rows).join('g').attr('transform', (r) => `translate(${x(r.mes)},0)`);
     g.selectAll('rect').data((r) => [['nomina', r.nomina], ['ganada', r.ganada]]).join('rect').attr('x', (q) => x1(q[0])).attr('width', x1.bandwidth()).attr('y', (q) => y(q[1])).attr('height', (q) => y(0) - y(q[1])).attr('rx', 4).attr('fill', (q) => q[0] === 'nomina' ? '#C98A12' : '#1A5632');
-    g.append('text').attr('x', x.bandwidth() / 2).attr('y', (r) => y(Math.max(r.nomina, r.ganada)) - 6).attr('text-anchor', 'middle').style('font-size', '12px').style('font-weight', 700).attr('fill', 'var(--tinta-2)').text((r) => C.P(r.nomina / r.ganada));
+    g.append('text').attr('x', x.bandwidth() / 2).attr('y', (r) => y(Math.max(r.nomina, r.ganada)) - 6).attr('text-anchor', 'middle').style('font-size', '12px').style('font-weight', 700).attr('fill', 'var(--tinta-2)').text((r) => r.ganada > 0 ? C.P(r.nomina / r.ganada) : (r.nomina > 0 ? 'sin avance' : ''));
     const t = C.tip(box);
     g.append('rect').attr('width', x.bandwidth()).attr('y', 0).attr('height', y(0)).attr('fill', 'transparent')
       .on('mousemove', (ev, r) => C.showTip(box, t, ev, [{ t: C.mesN(r.mes) }, { t: 'Nómina ' + C.K(r.nomina), c: '#C98A12' }, { t: 'Ganada ' + C.K(r.ganada), c: '#1A5632' }])).on('mouseleave', () => { t.hidden = true; });
   }
 
-  function drawMaestros(v) {
+  // Maestros de un frente: la nómina de maestros (administración) se reparte por las horas que registran en la app en ese frente
+  function drawMaestrosFrente(fr) {
+    const box = $('ch-maestros');
+    $('t-maestros').textContent = 'Maestros: costo asignado al frente';
+    $('s-maestros').textContent = 'Administración (A) repartida según las horas que los maestros registran en la app en este frente, desde agosto. Arriba: parte del total de maestros del mes.';
+    box.querySelectorAll('.vacio-ch').forEach((e) => e.remove());
+    const rows = ok('maestros_frente') ? D('maestros_frente').filter((r) => r.f === fr) : [];
+    if (!rows.length) { sinDatos(box, 'Ningún maestro ha registrado horas en este frente en la app.'); return; }
+    leyenda(box, [['#1A5632', 'Real (nómina SINCO repartida)'], ['#9CC3A8', 'Estimado con la app (mes sin nómina)']]);
+    const H = 240, m = { t: 22, r: 10, b: 26, l: 40 };
+    const val = (r) => r.real != null ? r.real : (r.estimado || 0);
+    const { svg, x, y } = marco(box, H, m, rows.map((r) => r.mes), d3.max(rows, val), (v_) => d3.format(',.0f')(v_ * 1000).replace(/,/g, '.'), true);
+    svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).tickFormat((d) => C.mesN(d))).call(C.axisClean).call((g) => g.selectAll('line').remove());
+    const bw = Math.min(x.bandwidth(), 56);
+    const g = svg.append('g').selectAll('g').data(rows).join('g').attr('transform', (r) => `translate(${x(r.mes) + (x.bandwidth() - bw) / 2},0)`);
+    g.append('rect').attr('width', bw).attr('y', (r) => y(val(r))).attr('height', (r) => y(0) - y(val(r))).attr('rx', 4).attr('fill', (r) => r.real != null ? '#1A5632' : '#9CC3A8');
+    g.append('text').attr('x', bw / 2).attr('y', (r) => y(val(r)) - 6).attr('text-anchor', 'middle').style('font-size', '12px').style('font-weight', 700).attr('fill', 'var(--tinta-2)').text((r) => r.pct != null ? C.P(r.pct) : '');
+    const t = C.tip(box);
+    g.append('rect').attr('width', bw).attr('y', 0).attr('height', y(0)).attr('fill', 'transparent')
+      .on('mousemove', (ev, r) => C.showTip(box, t, ev, [{ t: C.mesN(r.mes) }, { t: (r.real != null ? 'Real ' : 'Estimado ') + C.K(val(r)), c: r.real != null ? '#1A5632' : '#9CC3A8' }, { t: C.P(r.pct) + ' de las horas de maestros del mes' }]))
+      .on('mouseleave', () => { t.hidden = true; });
+  }
+
+  function drawMaestros(v, fr) {
+    if (fr) return drawMaestrosFrente(fr);
+    $('t-maestros').textContent = 'Maestros: proyectado, real y tope';
+    $('s-maestros').textContent = 'Administración (A). La línea es el tope mensual para cerrar dentro del presupuesto.';
     const box = $('ch-maestros'); if (!ok('maestros_mes')) return;
+    box.querySelectorAll('.vacio-ch').forEach((e) => e.remove());
     const rows = D('maestros_mes'); const tope = v.maestros_tope_mes;
     leyenda(box, [['#C9D3CB', 'Proyectado'], ['#1A5632', 'Real (nómina SINCO)'], ['#B3261E', 'Tope ' + C.K(tope) + ' al mes', true]]);
     const H = 240, m = { t: 12, r: 10, b: 26, l: 40 };
@@ -1290,9 +1348,30 @@ dash.calc('alertas_gerencia', {
       .on('mousemove', (ev, r) => C.showTip(box, t, ev, [{ t: C.mesN(r.mes) }, { t: 'Proyectado ' + C.K(r.proy), c: '#C9D3CB' }, ...(r.real != null ? [{ t: 'Real ' + C.K(r.real), c: '#1A5632' }] : [])])).on('mouseleave', () => { t.hidden = true; });
   }
 
-  function drawEquipos() {
+  function drawEquipos(fr) {
     const box = $('equipos'); box.replaceChildren(); if (!ok('equipos_frente')) return;
     const meses = D('equipos_meses') || [];
+    if (fr) {
+      const r = D('equipos_frente').find((q) => q.f === fr);
+      if (!r || !((r.real || 0) > 0 || (r.meta || 0) > 0)) { box.appendChild(el('p', 'vacio-ch', 'Sin equipos alquilados facturados a este frente.')); return; }
+      // cada mes facturado y, al final, el acumulado contra lo que reconoce el APU
+      const filas = meses.map((m_, i) => [C.mesN(m_), r['m' + (i + 1)] || 0, null]).concat([['Total facturado', r.real || 0, r.meta || 0]]);
+      const max = Math.max(...filas.map((q) => Math.max(q[1], q[2] || 0)), 1);
+      const rel = r.meta ? r.real / r.meta : null; const cT = rel != null && rel > 1.2 ? 'var(--rojo)' : 'var(--verde)';
+      filas.forEach(([n_, vv, meta], i) => {
+        const tot = i === filas.length - 1;
+        const g = el('div'); g.style.cssText = 'display:grid;grid-template-columns:minmax(0,130px) minmax(0,1fr) 82px 52px;gap:10px;align-items:center;font-size:13px' + (tot ? ';border-top:1px solid var(--linea);padding-top:10px;font-weight:700' : '');
+        const bs = el('div'); bs.style.cssText = 'display:flex;flex-direction:column;gap:3px';
+        [[vv, tot ? cT : 'var(--verde)']].concat(tot ? [[meta, 'var(--gris-azul)']] : []).forEach(([x_, cc]) => { const s = el('span'); s.style.cssText = 'height:9px;border-radius:999px;overflow:hidden;display:block;background:var(--linea-2)'; const ii = el('i'); ii.style.cssText = `display:block;height:100%;width:${Math.max(1, Math.round(x_ / max * 100))}%;background:${cc}`; s.appendChild(ii); bs.appendChild(s); });
+        const fv = el('span', '', C.K(vv)); fv.style.cssText = 'text-align:right;font-variant-numeric:tabular-nums';
+        const rl = el('b', '', tot && rel != null ? C.P(rel) : ''); rl.style.cssText = `text-align:right;color:${cT}`;
+        g.appendChild(el('span', '', n_)); g.appendChild(bs); g.appendChild(fv); g.appendChild(rl); box.appendChild(g);
+      });
+      box.appendChild(el('p', 'muted', `APU de equipo del frente: ${C.K(r.ppto)} · reconocido por lo ejecutado: ${C.K(r.meta)}.`));
+      const lg = el('div', 'legend'); [['var(--verde)', 'Facturado'], ['var(--gris-azul)', 'APU ganado'], ['var(--rojo)', 'Más de 120 %']].forEach(([cc, t]) => { const s = el('span'); const sw = el('i', 'sw'); sw.style.background = cc; s.appendChild(sw); s.appendChild(document.createTextNode(t)); lg.appendChild(s); });
+      box.appendChild(lg);
+      return;
+    }
     const rows = D('equipos_frente').filter((r) => (r.real || 0) > 0.5).sort((a, b) => b.real - a.real);
     const max = Math.max(...rows.map((r) => Math.max(r.real, r.meta || 0)), 1);
     rows.forEach((r) => {
