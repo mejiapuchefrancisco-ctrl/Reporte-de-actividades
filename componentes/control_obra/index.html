@@ -6,7 +6,8 @@
 <title>Control de obra · AIRPLAN T1 JMC</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="./d3.min.js"></script>
+<script>if (!window.d3) document.write('<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"><\/script>');</script>
 <style>
 /* Línea visual: verde AIA, fondo gris claro, tarjetas blancas; ámbar y rojo solo para estado. */
 :root {
@@ -768,6 +769,7 @@ dash.calc('alertas_gerencia', {
     vals.forEach((v, i) => { const b = el('i', i === iSel ? 'on' : ''); b.style.height = Math.max(3, Math.round((v || 0) / max * 28)) + 'px'; s.appendChild(b); });
     return s;
   };
+  const seguro = (fn) => { try { fn(); } catch (e) { console.error(e); } };
   const kpi = (cls, label, valor, unidad, nota, notaTono, spark) => {
     const k = el('div', 'kpi ' + (cls || ''));
     k.appendChild(el('span', 'l', label));
@@ -790,8 +792,11 @@ dash.calc('alertas_gerencia', {
 
   // ---------- controles ----------
   const ss = $('sel-semana'), sm = $('sel-maestro');
-  ss.addEventListener('change', () => { C.state.sel = null; dash.setParams({ semana: ss.value || null, dia: null }); });
-  sm.addEventListener('change', () => dash.setParams({ maestro: sm.value || null }));
+  // 'input' y 'change': algunos navegadores solo avisan uno de los dos al elegir con el mouse o el teclado
+  const elegirSemana = () => { if ((ss.value || null) === (dash.params().semana || C.state.lun)) return; C.state.sel = null; dash.setParams({ semana: ss.value || null, dia: null }); };
+  ss.addEventListener('input', elegirSemana); ss.addEventListener('change', elegirSemana);
+  const elegirMaestro = () => { if ((sm.value || null) === (dash.params().maestro || null)) return; dash.setParams({ maestro: sm.value || null }); };
+  sm.addEventListener('input', elegirMaestro); sm.addEventListener('change', elegirMaestro);
   const moverSemana = (d) => { const s = D('semanas').map((r) => r.lunes); const i = s.indexOf(C.state.lun); const j = i + d; if (j >= 0 && j < s.length) { C.state.sel = null; dash.setParams({ semana: s[j], dia: null }); } };
   $('sem-prev').addEventListener('click', () => moverSemana(-1));
   $('sem-next').addEventListener('click', () => moverSemana(1));
@@ -813,10 +818,10 @@ dash.calc('alertas_gerencia', {
     const maestro = esApp ? (prm.maestro || '') : '';
 
     // controles
-    if (document.activeElement !== ss) {
+    if (document.activeElement !== ss || ss.options.length !== sem.length) {
       ss.replaceChildren(...sem.slice().reverse().map((r) => new Option(`${fechaCorta(r.lunes)} – ${fechaCorta(C.addD(r.lunes, 6))}` + (r.fuente === 'App' ? '' : ' · nómina'), r.lunes)));
-      ss.value = lun;
     }
+    if (ss.value !== lun) ss.value = lun;
     const nSem = (() => { const d = new Date(lun + 'T12:00:00Z'); const t = new Date(Date.UTC(d.getUTCFullYear(), 0, 4)); return 1 + Math.round(((d - t) / 864e5 - 3 + ((t.getUTCDay() + 6) % 7)) / 7); })();
     $('sem-eyebrow').textContent = `Semana ${nSem} · lunes a domingo` + (esApp ? '' : ' · nómina repartida');
     $('sem-prev').disabled = iS <= 0; $('sem-next').disabled = iS >= semanas.length - 1;
@@ -889,10 +894,7 @@ dash.calc('alertas_gerencia', {
       box.appendChild(kpi(ca && ca.altas ? 'bad' : ca && ca.alertas ? 'warn' : 'ok', 'Alertas del día', C.N(ca ? ca.alertas : 0), '', `${C.N(ca ? ca.altas : 0)} de nivel alto`, true, null));
     }
 
-    drawHistorico(lun);
-    drawHoy();
-    drawCostoFrente(lun);
-    drawSemanas(lun);
+    seguro(() => drawHistorico(lun)); seguro(drawHoy); seguro(() => drawCostoFrente(lun)); seguro(() => drawSemanas(lun));
     if (!esApp) return;
 
     // ---------- falta registrar ----------
@@ -1209,7 +1211,7 @@ dash.calc('alertas_gerencia', {
       fd.appendChild(el('div', '', `Nómina propia ${C.K(fs.mo_real)} frente a ${C.K(fs.mo_meta)} que corresponde a lo ejecutado (${C.P(fs.pct_gastado)}) · sobre APU ${C.K(fs.sobre_apu)} · sobre SINCO ${C.K(fs.contr_sobre)} · subcontratos pagados sin cobrar ${C.K(fs.sub_sin_cobrar)}`));
       const q = el('div'); const qb = el('b', '', 'Qué decidir: '); q.appendChild(qb); q.appendChild(document.createTextNode(fs.decidir || 'Sin alertas.')); fd.appendChild(q);
     }
-    drawCobro(); drawMO(); drawMaestros(v); drawEquipos();
+    seguro(drawCobro); seguro(drawMO); seguro(() => drawMaestros(v)); seguro(drawEquipos);
     // tablas
     const ta = $('tb-act').querySelector('tbody'); ta.replaceChildren();
     D('actividades_sobre_apu').slice().sort((a, b) => b.exceso - a.exceso).slice(0, 15).forEach((a) => fila(ta, [a.cod, a.desc, C.K(a.nomina), C.K(a.apu), C.K(a.exceso)], [2, 3, 4]));
