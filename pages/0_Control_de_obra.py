@@ -2,7 +2,8 @@
 
 Dos vistas en una sola página:
   - Control semanal (administrador): semana de lunes a domingo desde abril, día a día, maestros, alertas, actividades.
-  - Gerencia: alertas de sobrecosto en miles de pesos (cobro, subcontratos, mano de obra, actividades, equipos, horas extra).
+  - Gerencia: mano de obra en millones de pesos. Maestros (A) contra la proyección de administración y oficiales y ayudantes
+    contra la MO de los APU repartida en partes iguales; ahorro acumulado, por frente, actividades sobre APU y nómina sin MO en el APU.
 
 Los datos se calculan en control_obra_datos.py con las mismas reglas de app.py y pages/1_Gerencia.py.
 El dibujo está en componentes/control_obra/index.html.
