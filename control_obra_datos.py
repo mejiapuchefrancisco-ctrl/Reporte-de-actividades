@@ -598,6 +598,134 @@ def datos_por_frente(o, S, Cs, As, H, P_curva, cortes, mo, hoy):
     return out
 
 
+# ===================== MANO DE OBRA PARA GERENCIA (maestros y oficiales/ayudantes) =====================
+FESTIVOS_CO = {f"2026-{d}" for d in ["01-01", "01-12", "03-23", "04-02", "04-03", "05-01", "05-18", "06-08", "06-15", "06-29", "07-20", "08-07",
+                                     "08-17", "10-12", "11-02", "11-16", "12-08", "12-25"]} | \
+              {f"2027-{d}" for d in ["01-01", "01-11", "03-22", "03-25", "03-26", "05-01", "05-10", "05-31", "06-07", "06-28", "07-05", "07-20",
+                                     "08-07", "08-16", "10-18", "11-01", "11-15", "12-08", "12-25"]}
+
+
+def _dias_habiles(desde, hasta):
+    """Lunes a sábado sin festivos de Colombia, ambos días incluidos."""
+    dias = pd.date_range(pd.Timestamp(desde).normalize(), pd.Timestamp(hasta).normalize(), freq="D")
+    return int(sum(1 for d in dias if d.weekday() < 6 and d.strftime("%Y-%m-%d") not in FESTIVOS_CO))
+
+
+def _texto_simple(s):
+    s = re.sub(r"\(.*?\)", " ", str(s or ""))
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _trigramas(s):
+    from collections import Counter
+    s = " " + s + " "
+    return Counter(s[i:i + 3] for i in range(len(s) - 2))
+
+
+def _parecido(a, b):
+    """Coincidencia de dos descripciones (coseno de trigramas de letras), entre 0 y 1."""
+    if not a or not b:
+        return 0.0
+    num = sum(v * b.get(k, 0) for k, v in a.items())
+    den = (sum(v * v for v in a.values()) ** 0.5) * (sum(v * v for v in b.values()) ** 0.5)
+    return num / den if den else 0.0
+
+
+def _bonito(s):
+    s = re.sub(r"\s*\(.*", "", re.sub(r"\s+", " ", str(s or ""))).strip()
+    return s[:1].upper() + s[1:].lower()
+
+
+def datos_mano_obra(o, mop, mo_app, maestros_frente):
+    """Vista de gerencia de mano de obra (millones con 3 decimales):
+    - maestros (administración A): nómina real de cada mes contra la proyección del presupuesto de administración, tope y cierre al ritmo actual.
+    - oficiales y ayudantes de las actividades: nómina pagada contra la MO de los APU repartida en partes iguales en los meses de obra
+      (sin programación); por frente, por actividad, y la nómina en actividades cuyo APU no trae MO, con el ítem del presupuesto más parecido.
+    - el mes sin nómina se estima con la app y se lleva al cierre del mes por días hábiles."""
+    adm = o["adm_mes"]
+    meses = [str(m) for m in adm.index]
+    EA = o["maestros"]
+    R = o["R"].copy()
+    R["m"] = R["mes"].astype(str)
+    R["fr"] = R["cod"].astype(str).str[:2]
+    sinco = R["fuente"] == "Nómina SINCO"
+    estim = R["fuente"] != "Nómina SINCO"
+    corte = str(o["cortes"]["nomina"])[:7]
+    cut = meses.index(corte) + 1 if corte in meses else sum(1 for m in meses if m <= corte)
+    # ---- maestros
+    mae = [dict(mes=m, proy=_M(adm.loc[i, "Maestros"]), real=_M(adm.loc[i, "real_Maestros"]) if "real_Maestros" in adm and pd.notna(adm.loc[i, "real_Maestros"]) else None)
+           for i, m in zip(adm.index, meses)]
+    es_maestro = R["cargo"].astype(str).str.contains("aestro", na=False) & ~R["cargo"].astype(str).str.contains("uxiliar", na=False)
+    # ---- mes estimado con la app
+    est_mes = meses[cut] if cut < len(meses) else None
+    e = R[estim & (R["m"] == est_mes)] if est_mes else R.iloc[0:0]
+    hasta = pd.to_datetime(e["fecha_max"], errors="coerce").max() if len(e) and "fecha_max" in e else pd.NaT
+    if pd.isna(hasta) and len(mo_app):
+        hasta = pd.to_datetime(mo_app["fecha"], errors="coerce").max()
+    oct_ = None
+    if est_mes and pd.notna(hasta):
+        ini = pd.Period(est_mes).start_time
+        fin = pd.Period(est_mes).end_time.normalize()
+        oct_ = dict(mes=est_mes, hasta=str(pd.Timestamp(hasta).date()), dias_reg=_dias_habiles(ini, min(pd.Timestamp(hasta), fin)),
+                    dias_mes=_dias_habiles(ini, fin), maestros=_M(e.loc[(e["imputa"] == "A") & es_maestro.loc[e.index], "costo"].sum()))
+    # ---- oficiales y ayudantes en actividades
+    mp = mop.copy()
+    for c in ["Proy. mano de obra", "Proy. subcontratos", "Proyectado total"]:
+        mp[c] = pd.to_numeric(mp.get(c), errors="coerce").fillna(0)
+    mp = mp.groupby("Código").agg(mo=("Proy. mano de obra", "sum"), sub=("Proy. subcontratos", "sum"), tot=("Proyectado total", "sum"), desc=("Descripción", "first"))
+    x = R[R["imputa"] != "A"].copy()
+    x["mo"] = x["cod"].map(mp["mo"]).fillna(0)
+    pag_cod = x[sinco.reindex(x.index) & (x["mo"] > 0)].groupby("cod")["costo"].sum()
+    acts = sorted(pag_cod[pag_cod > 0].index)
+    nombres = {str(k).zfill(2): v for k, v in o["frentes"]["frente"].items()}
+    nombres.setdefault("19", "19 - No presupuestadas")
+    apu, pag, est = {}, {}, {}
+    for f, g in x[x["mo"] > 0].groupby("fr"):
+        pag[f] = [_M(g[sinco.reindex(g.index) & (g["m"] == m)]["costo"].sum()) for m in meses]
+        est[f] = [_M(g[estim.reindex(g.index) & (g["m"] == m)]["costo"].sum()) for m in meses]
+    for c in acts:
+        apu[c[:2]] = apu.get(c[:2], 0) + float(mp.loc[c, "mo"])
+    apu = {f: _M(v) for f, v in apu.items()}
+    act_rows = []
+    for c in acts:
+        g = x[x["cod"] == c]
+        act_rows.append(dict(c=c, f=c[:2], d=_bonito(mp.loc[c, "desc"])[:90], apu=_M(mp.loc[c, "mo"]), pag=_M(g[sinco.reindex(g.index)]["costo"].sum()),
+                             est=_M(g[estim.reindex(g.index)]["costo"].sum())))
+    # ---- nómina en actividades sin MO en el APU, con el ítem más parecido que sí tiene MO
+    ds_app = {}
+    if mo_app is not None and len(mo_app) and "codact" in mo_app:
+        ds_app = mo_app.dropna(subset=["codact"]).drop_duplicates("codact").set_index(mo_app.dropna(subset=["codact"]).drop_duplicates("codact")["codact"].astype(str))["actDesc"].to_dict()
+    cand = mp[mp["mo"] > 0]
+    tri = {k: _trigramas(_texto_simple(v)) for k, v in cand["desc"].items()}
+    s0 = x[sinco.reindex(x.index) & (x["mo"] == 0)]
+    sinapu = {f: _M(v) for f, v in s0.groupby("fr")["costo"].sum().items()}
+    sinmo = []
+    for c, g in s0.groupby("cod"):
+        en_ppto = c in mp.index
+        desc = mp.loc[c, "desc"] if en_ppto else ds_app.get(c, "")
+        if not en_ppto:
+            tipo = "No está en el presupuesto"
+        elif mp.loc[c, "sub"] > 0:
+            tipo = "Subcontrato"
+        else:
+            tipo = "APU sin mano de obra"
+        mejor = None
+        if desc:
+            t0 = _trigramas(_texto_simple(desc))
+            sc = sorted(((_parecido(t0, tv) + (0.03 if k[:2] == c[:2] else 0), k) for k, tv in tri.items()), reverse=True)[:1]
+            if sc:
+                s_, k = sc[0]
+                mejor = dict(c=k, d=_bonito(cand.loc[k, "desc"])[:90], mo=_M(cand.loc[k, "mo"]), sim=round(min(1.0, s_), 2))
+        sinmo.append(dict(c=c, f=c[:2], d=_bonito(desc)[:90] or "(sin descripción)", tipo=tipo, pag=_M(g["costo"].sum()), n=int(g["cedula"].nunique()) if "cedula" in g else None,
+                          sub=_M(mp.loc[c, "sub"]) if en_ppto else 0, m=mejor))
+    sinmo.sort(key=lambda r: -(r["pag"] or 0))
+    mf = [r for r in (maestros_frente or []) if r.get("mes") == corte and r.get("real")]
+    return dict(meses=meses, corte=corte, cut=cut, frentes=nombres, apu=apu, pag=pag, est=est, sinapu=sinapu, acts=act_rows, sinmo=sinmo, oct=oct_,
+                maestros=dict(mes=mae, ppto=_M(EA["ppto"]), real=_M(EA["real"]), proy_hasta=_M(EA["proy_hasta"]), cierre_ritmo=_M(EA["cierre_ritmo"]),
+                              tope=_M(EA["tope_mes"]), ritmo=_M(EA["ritmo"]), meses_rest=_r(EA.get("meses_rest", 6.8), 2), frente=mf))
+
+
 def a_miles(t):
     """'143,2 M' -> '$ 143.200' dentro de los textos de decisión del tablero gerencial."""
     def f(mo):
@@ -650,6 +778,7 @@ def construir(fuentes, mo_raw, hoy=None, recargos=None, eq_fact=None, eq_apu=Non
     adm["semanas"] = _personas_nomina(Rb, adm["semanas"])
     ger = datos_gerencia(o, S, H, Pc, L["cortes"], eq_fact, eq_apu, anticipos, hoy)
     ger.update(datos_por_frente(o, S, L["Cs"], L["As"], H, Pc, L["cortes"], mo, hoy))
+    ger["mano_obra"] = datos_mano_obra(o, mop, mo, ger.get("maestros_frente"))
     ct = o["cortes"]
     meta = dict(generado=str(hoy)[:16], nomina_hasta=str(ct["nomina"]), curva=str(pd.Timestamp(ct["curva"]).date()), acta=int(ct["acta"]),
                 app_hasta=str(mo["fecha"].max().date()), inicio_app=str(ini_app.date()),
