@@ -395,17 +395,6 @@ tr.sel td { background: var(--verde-suave); }
         <h1 class="lead">¿Cómo vamos con la mano de obra?</h1>
         <span class="muted" style="font-size:14px" id="ger-sub">Maestros por administración (A) y oficiales y ayudantes de las actividades, pagado contra proyectado. Cifras en millones de pesos.</span>
       </div>
-      <div class="g-tiles" id="g-tiles"></div>
-
-      <div class="card g-card">
-        <h2>Ahorro acumulado · mano de obra total</h2>
-        <p class="sub">Cada mes se resta lo pagado de lo proyectado. Si se pagó menos, la diferencia queda como ahorro y pasa al mes siguiente; si se pagó más, se descuenta del ahorro que se traía.</p>
-        <div class="g-leg" data-leg="aho"></div>
-        <div class="g-ch" id="g-ch-tot"></div>
-        <p class="g-note" id="g-note-tot"></p>
-        <div class="g-tbl"><table class="g-taho"><thead><tr><th>Mes</th><th class="n">Proyectado</th><th class="n">Pagado</th><th class="n">Diferencia del mes</th><th class="n">Acumulado</th></tr></thead><tbody id="g-tb-tot"></tbody></table></div>
-      </div>
-
       <h2 class="h2">Maestros · administración (A)</h2>
       <div class="g-grid2">
         <div class="card g-card">
@@ -478,6 +467,19 @@ tr.sel td { background: var(--verde-suave); }
         <div class="g-tbl"><table class="g-tsin"><thead><tr><th>Actividad pagada</th><th>Por qué no tiene MO</th><th class="n">Pagado</th><th>Se asemeja a (ítem con MO)</th><th class="n">MO del ítem</th><th class="n">Parecido</th></tr></thead><tbody id="g-tb-sin"></tbody></table></div>
         <button type="button" class="g-chip" id="g-sin-more">Ver todas</button>
       </div>
+      <h2 class="h2">General · mano de obra total</h2>
+      <p class="g-note" style="margin-top:-6px">Maestros más oficiales y ayudantes de las actividades.</p>
+      <div class="g-tiles" id="g-tiles"></div>
+
+      <div class="card g-card">
+        <h2>Ahorro acumulado · mano de obra total</h2>
+        <p class="sub">Cada mes se resta lo pagado de lo proyectado. Si se pagó menos, la diferencia queda como ahorro y pasa al mes siguiente; si se pagó más, se descuenta del ahorro que se traía.</p>
+        <div class="g-leg" data-leg="aho"></div>
+        <div class="g-ch" id="g-ch-tot"></div>
+        <p class="g-note" id="g-note-tot"></p>
+        <div class="g-tbl"><table class="g-taho"><thead><tr><th>Mes</th><th class="n">Proyectado</th><th class="n">Pagado</th><th class="n">Diferencia del mes</th><th class="n">Acumulado</th></tr></thead><tbody id="g-tb-tot"></tbody></table></div>
+      </div>
+
       <p class="note" id="nota-ger">Fuentes: nómina SINCO (BD_Nomina_MO) y el mes en curso estimado con la app, llevado al cierre del mes por días hábiles; proyección de maestros del presupuesto de administración (Base_Tablero_Gerencia); MO de los APU (hoja MO_proyectada de Parametros_Alertas) repartida en partes iguales en los meses de obra.</p>
     </section>
   </div>
