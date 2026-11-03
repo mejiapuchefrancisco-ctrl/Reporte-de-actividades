@@ -603,7 +603,8 @@ window.CO = (() => {
 <script>
 // ---------------- cálculos (administrador) ----------------
 // Una persona se espera en un día (lunes a sábado) si ese día está entre su primer y su último registro;
-// si su último registro es de los últimos 7 días, se sigue esperando hasta hoy.
+// si su último registro es de los últimos 7 días, se sigue esperando hasta hoy; si sigue en el Maestro de Personal,
+// se sigue esperando hasta 30 días después de su último registro (así no desaparece la cuadrilla de un maestro que dejó de enviar).
 dash.calc('resumen_dia', {
   title: 'Resumen del día',
   description: 'Por fecha: personal activo esperado, con registro, con novedad y sin registro; horas, extras y no presupuestadas.',
@@ -613,8 +614,8 @@ dash.calc('resumen_dia', {
     for (const r of registro_diario) { const o = rango.get(r.id) || [r.fecha, r.fecha]; if (r.fecha < o[0]) o[0] = r.fecha; if (r.fecha > o[1]) o[1] = r.fecha; rango.set(r.id, o); }
     const fechas = [...new Set(registro_diario.map((r) => r.fecha))].sort();
     const fmax = fechas[fechas.length - 1];
-    const lim = new Date(fmax + 'T12:00:00Z'); lim.setUTCDate(lim.getUTCDate() - 7); const reciente = lim.toISOString().slice(0, 10);
-    const activo = (id, f) => { const o = rango.get(id); return !!o && o[0] <= f && (f <= o[1] || o[1] >= reciente); };
+    const lim = new Date(fmax + 'T12:00:00Z'); lim.setUTCDate(lim.getUTCDate() - 7); const reciente = lim.toISOString().slice(0, 10); lim.setUTCDate(lim.getUTCDate() - 23); const reciente30 = lim.toISOString().slice(0, 10); const enMP = new Set(personal.filter((p) => p.en_maestro_personal).map((p) => p.id));
+    const activo = (id, f) => { const o = rango.get(id); return !!o && o[0] <= f && (f <= o[1] || o[1] >= reciente || (enMP.has(id) && o[1] >= reciente30)); };
     const porDia = new Map();
     for (const r of registro_diario) { if (!porDia.has(r.fecha)) porDia.set(r.fecha, []); porDia.get(r.fecha).push(r); }
     return fechas.map((f) => {
@@ -657,8 +658,8 @@ dash.calc('pendientes_dia', {
     for (const r of registro_diario) { const o = rango.get(r.id) || [r.fecha, r.fecha]; if (r.fecha < o[0]) o[0] = r.fecha; if (r.fecha > o[1]) o[1] = r.fecha; rango.set(r.id, o); }
     const fechas = [...new Set(registro_diario.map((r) => r.fecha))].sort();
     const fmax = fechas[fechas.length - 1];
-    const lim = new Date(fmax + 'T12:00:00Z'); lim.setUTCDate(lim.getUTCDate() - 7); const reciente = lim.toISOString().slice(0, 10);
-    const activo = (id, f) => { const o = rango.get(id); return !!o && o[0] <= f && (f <= o[1] || o[1] >= reciente); };
+    const lim = new Date(fmax + 'T12:00:00Z'); lim.setUTCDate(lim.getUTCDate() - 7); const reciente = lim.toISOString().slice(0, 10); lim.setUTCDate(lim.getUTCDate() - 23); const reciente30 = lim.toISOString().slice(0, 10); const enMP = new Set(personal.filter((p) => p.en_maestro_personal).map((p) => p.id));
+    const activo = (id, f) => { const o = rango.get(id); return !!o && o[0] <= f && (f <= o[1] || o[1] >= reciente || (enMP.has(id) && o[1] >= reciente30)); };
     const tiene = new Set(registro_diario.map((r) => r.id + '|' + r.fecha));
     const out = [];
     for (const f of fechas.filter((f) => new Date(f + 'T12:00:00Z').getUTCDay() !== 0)) for (const p of personal) {
@@ -710,8 +711,8 @@ dash.calc('semana_persona', {
     for (const r of registro_diario) { const o = rango.get(r.id) || [r.fecha, r.fecha]; if (r.fecha < o[0]) o[0] = r.fecha; if (r.fecha > o[1]) o[1] = r.fecha; rango.set(r.id, o); }
     const fechas = [...new Set(registro_diario.map((r) => r.fecha))].sort();
     const fmax = fechas[fechas.length - 1];
-    const lim = new Date(fmax + 'T12:00:00Z'); lim.setUTCDate(lim.getUTCDate() - 7); const reciente = lim.toISOString().slice(0, 10);
-    const activo = (id, f) => { const o = rango.get(id); return !!o && o[0] <= f && (f <= o[1] || o[1] >= reciente); };
+    const lim = new Date(fmax + 'T12:00:00Z'); lim.setUTCDate(lim.getUTCDate() - 7); const reciente = lim.toISOString().slice(0, 10); lim.setUTCDate(lim.getUTCDate() - 23); const reciente30 = lim.toISOString().slice(0, 10); const enMP = new Set(personal.filter((p) => p.en_maestro_personal).map((p) => p.id));
+    const activo = (id, f) => { const o = rango.get(id); return !!o && o[0] <= f && (f <= o[1] || o[1] >= reciente || (enMP.has(id) && o[1] >= reciente30)); };
     const lun = (s) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - (d.getUTCDay() + 6) % 7); return d.toISOString().slice(0, 10); };
     const conDatos = new Set(fechas);
     const R = new Map(registro_diario.map((r) => [r.id + '|' + r.fecha, r]));
