@@ -637,7 +637,7 @@ def _bonito(s):
     return s[:1].upper() + s[1:].lower()
 
 
-def datos_mano_obra(o, mop, mo_app, maestros_frente):
+def datos_mano_obra(o, mop, mo_app, maestros_frente, pa=None):
     """Vista de gerencia de mano de obra (millones con 3 decimales):
     - maestros (administración A): nómina real de cada mes contra la proyección del presupuesto de administración, tope y cierre al ritmo actual.
     - oficiales y ayudantes de las actividades: nómina pagada contra la MO de los APU repartida en partes iguales en los meses de obra
@@ -721,7 +721,34 @@ def datos_mano_obra(o, mop, mo_app, maestros_frente):
                           sub=_M(mp.loc[c, "sub"]) if en_ppto else 0, m=mejor))
     sinmo.sort(key=lambda r: -(r["pag"] or 0))
     mf = [r for r in (maestros_frente or []) if r.get("mes") == corte and r.get("real")]
+    # ---- salario promedio por persona: proyectado (personal de la A con su salario, inicio y fin) y real (nómina ÷ personas pagadas)
+    sal = dict(proy=dict(mae=[], oa=[]), real=dict(mae=[], oa=[]))
+    if pa is not None and len(pa):
+        q = pa[(pa["¿Proyectado en A?"].astype(str).str.strip() == "Sí") & (pa["Sección"].astype(str).str.strip() == "PERSONAL ADMINISTRATIVO")].copy()
+        q["g"] = np.where(q["Cargo en la proyección"].astype(str).str.upper().str.contains("MAESTRO"), "mae", "oa")
+        q["sal"] = pd.to_numeric(q["Salario total mes proyectado (con HE)"], errors="coerce")
+        for g in ("mae", "oa"):
+            qq = q[q["g"] == g]
+            for m in meses:
+                a0, b0 = pd.Period(m).start_time, pd.Period(m).end_time.normalize()
+                act = qq[(qq["Inicio"] <= b0) & (qq["Fin"] >= a0)]
+                sal["proy"][g].append(dict(n=int(len(act)), prom=_M(act["sal"].mean()) if len(act) else None))
+    ns = R[sinco].copy()
+    ns["gr"] = ns["cargo"].map(gd.grupo_cargo)
+    for g, msk in (("mae", ns["gr"] == "Maestros"), ("oa", ns["gr"].isin(["Oficiales", "Ayudantes"]))):
+        tt = ns[msk].groupby("m").agg(c=("costo", "sum"), n=("cedula", "nunique"))
+        sal["real"][g] = [dict(n=int(tt.loc[m, "n"]), prom=_M(tt.loc[m, "c"] / tt.loc[m, "n"])) if m in tt.index else dict(n=0, prom=None) for m in meses]
+    # ---- horas extra: % sobre el básico por mes y grupo, por frente (pesos sobre el tope) y personas sobre el tope (sin pesos)
+    hm = o.get("he_mes")
+    he = dict(tope=_r(o.get("he_tope", 0.4)), mes=[], grupo=[], frente=[], personas=[])
+    if hm is not None and len(hm):
+        he["mes"] = [dict(mes=str(i), personas=int(r.personas), pct=_r(r.pagado / r.base) if r.base else None, pagado=_M(r.pagado), proyectado=_M(r.proyectado)) for i, r in hm.iterrows()]
+        hg = o["he_grupo"]
+        he["grupo"] = [dict(g=str(g), vals=[_r(v) if pd.notna(v) else None for v in hg.loc[g].values], meses=[str(c) for c in hg.columns]) for g in hg.index]
+        he["frente"] = [dict(f=str(k), v=_M(v)) for k, v in o["he_frente"].sort_values(ascending=False).items() if v > 50000]
+        he["personas"] = [dict(n=str(r.nombre).title(), g=str(r.grupo), meses=str(r.meses), max=_r(r.maximo)) for r in o["he_personas"].itertuples()]
     return dict(meses=meses, corte=corte, cut=cut, frentes=nombres, apu=apu, pag=pag, est=est, sinapu=sinapu, acts=act_rows, sinmo=sinmo, oct=oct_,
+                sal=sal, he=he,
                 maestros=dict(mes=mae, ppto=_M(EA["ppto"]), real=_M(EA["real"]), proy_hasta=_M(EA["proy_hasta"]), cierre_ritmo=_M(EA["cierre_ritmo"]),
                               tope=_M(EA["tope_mes"]), ritmo=_M(EA["ritmo"]), meses_rest=_r(EA.get("meses_rest", 6.8), 2), frente=mf))
 
@@ -778,7 +805,7 @@ def construir(fuentes, mo_raw, hoy=None, recargos=None, eq_fact=None, eq_apu=Non
     adm["semanas"] = _personas_nomina(Rb, adm["semanas"])
     ger = datos_gerencia(o, S, H, Pc, L["cortes"], eq_fact, eq_apu, anticipos, hoy)
     ger.update(datos_por_frente(o, S, L["Cs"], L["As"], H, Pc, L["cortes"], mo, hoy))
-    ger["mano_obra"] = datos_mano_obra(o, mop, mo, ger.get("maestros_frente"))
+    ger["mano_obra"] = datos_mano_obra(o, mop, mo, ger.get("maestros_frente"), pa)
     ct = o["cortes"]
     meta = dict(generado=str(hoy)[:16], nomina_hasta=str(ct["nomina"]), curva=str(pd.Timestamp(ct["curva"]).date()), acta=int(ct["acta"]),
                 app_hasta=str(mo["fecha"].max().date()), inicio_app=str(ini_app.date()),
