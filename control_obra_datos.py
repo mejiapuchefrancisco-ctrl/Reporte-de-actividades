@@ -307,11 +307,14 @@ def datos_administrador(mo, maestro, excluidos, H, inicio_app, hoy):
     w["costo"] = np.where(w["es_cant"] | w["es_nov"], 0, w["costo_calculado"].fillna(0))
     w["conc"] = w["registradoPor"].astype(str).str.upper().str.startswith(("CONCILIACI", "AJUSTE"))
     w["rpn"] = w["registradoPor"].astype(str).map(NORM)
+    # una conciliación puede decir de qué maestro es la cuadrilla («... · maestro: NOMBRE»); cuenta para la cuadrilla habitual
+    w["mae"] = np.where(w["conc"], w["registradoPor"].astype(str).str.extract(r"(?i)maestro:\s*(.+)$")[0].fillna("").map(lambda s: NORM(s) if s else ""), w["rpn"])
     TP = lambda tp: "dom" if str(tp).startswith("Dominical") else "noc" if "Nocturn" in str(tp) else "ext" if str(tp).startswith("Extra") else "ord"
     w["b"] = w["tipoHora"].map(TP)
-    base = w[~w["conc"] & ~w["es_cant"] & (w["fecha"] >= D1 - pd.Timedelta(days=15))]
-    resp = base.groupby("nn")["rpn"].agg(lambda s: s.value_counts().index[0])
-    resp_all = w[~w["conc"] & ~w["es_cant"]].groupby("nn")["rpn"].agg(lambda s: s.value_counts().index[0])
+    con_mae = w[(w["mae"] != "") & ~w["es_cant"]]
+    base = con_mae[con_mae["fecha"] >= D1 - pd.Timedelta(days=15)]
+    resp = base.groupby("nn")["mae"].agg(lambda s: s.value_counts().index[0])
+    resp_all = con_mae.groupby("nn")["mae"].agg(lambda s: s.value_counts().index[0])
     t = maestro.copy()
     t["nn"] = t["NombreNormalizado"].map(gd.normalizar_nombre)
     NM = {gd.normalizar_nombre(x): " ".join(str(x).title().split()) for x in t["NombreCompleto"].dropna()}
