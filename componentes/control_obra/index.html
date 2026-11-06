@@ -605,6 +605,12 @@ window.CO = (() => {
 // Una persona se espera en un día (lunes a sábado) si ese día está entre su primer y su último registro;
 // si su último registro es de los últimos 7 días, se sigue esperando hasta hoy; si sigue en el Maestro de Personal,
 // se sigue esperando hasta 30 días después de su último registro (así no desaparece la cuadrilla de un maestro que dejó de enviar).
+// Domingos y festivos de Colombia no se exigen: quien trabaje ese día va con horas dominicales/festivas.
+const FESTIVOS_CO = new Set(['2026-01-01', '2026-01-12', '2026-03-23', '2026-04-02', '2026-04-03', '2026-05-01', '2026-05-18', '2026-06-08',
+  '2026-06-15', '2026-06-29', '2026-07-20', '2026-08-07', '2026-08-17', '2026-10-12', '2026-11-02', '2026-11-16', '2026-12-08', '2026-12-25',
+  '2027-01-01', '2027-01-11', '2027-03-22', '2027-03-25', '2027-03-26', '2027-05-01', '2027-05-10', '2027-05-31', '2027-06-07', '2027-07-05',
+  '2027-07-20', '2027-08-07', '2027-08-16', '2027-10-18', '2027-11-01', '2027-11-15', '2027-12-08', '2027-12-25']);
+const noHabil = (f) => new Date(f + 'T12:00:00Z').getUTCDay() === 0 || FESTIVOS_CO.has(f);
 dash.calc('resumen_dia', {
   title: 'Resumen del día',
   description: 'Por fecha: personal activo esperado, con registro, con novedad y sin registro; horas, extras y no presupuestadas.',
@@ -620,7 +626,7 @@ dash.calc('resumen_dia', {
     for (const r of registro_diario) { if (!porDia.has(r.fecha)) porDia.set(r.fecha, []); porDia.get(r.fecha).push(r); }
     return fechas.map((f) => {
       const rows = porDia.get(f);
-      const domingo = new Date(f + 'T12:00:00Z').getUTCDay() === 0;
+      const domingo = noHabil(f); const festivo = FESTIVOS_CO.has(f);
       const conH = new Set(rows.filter((r) => r.horas > 0).map((r) => r.id));
       const conNov = new Set(rows.filter((r) => !(r.horas > 0) && r.novedad).map((r) => r.id));
       const esperadas = personal.filter((p) => activo(p.id, f)).length;
@@ -629,7 +635,7 @@ dash.calc('resumen_dia', {
       const extras = rows.reduce((s, r) => s + r.extras, 0);
       const np = rows.reduce((s, r) => s + r.no_presupuestadas, 0);
       const maestros = new Set(rows.filter((r) => !r.conciliado).flatMap((r) => r.registrado_por.split(' / ')).filter((m) => !/^(Conciliaci|Ajuste)/i.test(m)));
-      return { fecha: f, esperadas, con_registro: conH.size, con_novedad: conNov.size, sin_registro: domingo ? null : sin,
+      return { fecha: f, esperadas, con_registro: conH.size, con_novedad: conNov.size, sin_registro: domingo ? null : sin, festivo,
         horas: Math.round(horas * 10) / 10, extras: Math.round(extras * 10) / 10, pct_extra: horas ? extras / horas : null,
         no_presupuestadas: Math.round(np * 10) / 10, pct_np: horas ? np / horas : null, maestros_envio: maestros.size,
         ultimo_envio: rows.map((r) => r.enviado).sort().slice(-1)[0] || null };
@@ -651,7 +657,7 @@ dash.calc('costo_dia', {
 });
 dash.calc('pendientes_dia', {
   title: 'Falta registrar',
-  description: 'Personal activo sin ninguna fila (horas o novedad) en cada día de lunes a sábado con registros.',
+  description: 'Personal activo sin ninguna fila (horas o novedad) en cada día de lunes a sábado con registros, sin contar festivos.',
   inputs: ['registro_diario', 'personal'],
   fn: (registro_diario, personal) => {
     const rango = new Map();
@@ -662,7 +668,7 @@ dash.calc('pendientes_dia', {
     const activo = (id, f) => { const o = rango.get(id); return !!o && o[0] <= f && (f <= o[1] || o[1] >= reciente || (enMP.has(id) && o[1] >= reciente30)); };
     const tiene = new Set(registro_diario.map((r) => r.id + '|' + r.fecha));
     const out = [];
-    for (const f of fechas.filter((f) => new Date(f + 'T12:00:00Z').getUTCDay() !== 0)) for (const p of personal) {
+    for (const f of fechas.filter((f) => !noHabil(f))) for (const p of personal) {
       if (activo(p.id, f) && !tiene.has(p.id + '|' + f)) out.push({ clave: f + '|' + p.id, fecha: f, id: p.id, nombre: p.nombre, maestro: p.maestro, cargo: p.cargo });
     }
     return out;
@@ -722,7 +728,7 @@ dash.calc('semana_persona', {
       K.forEach((k, i) => {
         const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + i); const f = d.toISOString().slice(0, 10);
         const r = R.get(p.id + '|' + f);
-        const espera = i < 6 && conDatos.has(f) && activo(p.id, f);
+        const espera = i < 6 && !FESTIVOS_CO.has(f) && conDatos.has(f) && activo(p.id, f);
         if (espera) o.esperados++;
         if (r && r.horas > 0) { o[k] = Math.round(r.horas * 100) / 100; o.total += r.horas; o.extras += r.extras; }
         else if (r && r.novedad) { o[k] = r.novedad; o.novedades++; }
@@ -1002,7 +1008,7 @@ dash.calc('alertas_gerencia', {
       $('sublead').textContent = `${C.H(R.horas)} horas · ${C.P(R.pct_extra)} en extras`;
     } else {
       const comp = CB && CB.dias_faltantes === 0;
-      $('lead').textContent = (comp ? `Semana completa: los ${C.N(CB.esperadas)} registraron todos los días. ` : CB ? `Faltan ${C.N(CB.dias_faltantes)} días-persona por registrar. ` : '') +
+      $('lead').textContent = (comp && CB.esperadas ? `Semana completa: los ${C.N(CB.esperadas)} registraron todos los días. ` : comp ? 'Aún no hay días hábiles con registro esta semana. ' : CB ? `Faltan ${C.N(CB.dias_faltantes)} días-persona por registrar. ` : '') +
         (mas12 ? `${C.N(mas12)} personas pasaron de 12 h extra y el ` : 'El ') + `${C.P(S.np)} de las horas fue no presupuestado.`;
       $('sublead').textContent = `Costo estimado ${C.pesosM(S.costo)} · ${C.H(S.horas)} horas` + (S.dias < 6 ? ` · semana en curso (${S.dias} día${S.dias === 1 ? '' : 's'} con datos)` : '');
     }
@@ -1032,7 +1038,7 @@ dash.calc('alertas_gerencia', {
       const dsem = res.filter((r) => C.lunes(r.fecha) === lun); const iD = dsem.findIndex((r) => r.fecha === dia);
       box.appendChild(kpi('ok', 'Costo del día', cd ? C.pesosM(cd.costo).replace('\u00a0M', '') : '—', 'M', cd ? C.pesosM(cd.costo_maestros) + ' de maestros (A)' : '', false, sparkEl(dsem.map((r) => { const c = D('costo_dia').find((x) => x.fecha === r.fecha); return c ? c.costo : 0; }), iD)));
       box.appendChild(kpi(R.sin_registro ? 'bad' : 'ok', 'Personas con registro', C.N(R.con_registro), 'de ' + C.N(R.esperadas), `${C.N(R.con_novedad)} con novedad`, false, sparkEl(dsem.map((r) => r.con_registro), iD)));
-      box.appendChild(kpi(R.sin_registro ? 'bad' : 'ok', 'Sin registro', R.sin_registro == null ? 'Dom' : C.N(R.sin_registro), '', R.sin_registro == null ? 'No se exige registro' : 'Ni horas ni novedad', true, null));
+      box.appendChild(kpi(R.sin_registro ? 'bad' : 'ok', 'Sin registro', R.sin_registro == null ? (R.festivo ? 'Festivo' : 'Dom') : C.N(R.sin_registro), '', R.sin_registro == null ? 'No se exige registro' : 'Ni horas ni novedad', true, null));
       box.appendChild(kpi('', 'Horas registradas', C.H(R.horas), 'h', `${C.P(R.pct_extra)} en horas extra`, false, sparkEl(dsem.map((r) => r.horas), iD)));
       box.appendChild(kpi(R.pct_np > 0.3 ? 'warn' : 'ok', 'No presupuestado', C.N(Math.round((R.pct_np || 0) * 100)), '%', `${C.H(R.no_presupuestadas)} h en códigos NP`, true, sparkEl(dsem.map((r) => r.pct_np || 0), iD)));
       box.appendChild(kpi(ca && ca.altas ? 'bad' : ca && ca.alertas ? 'warn' : 'ok', 'Alertas del día', C.N(ca ? ca.alertas : 0), '', `${C.N(ca ? ca.altas : 0)} de nivel alto`, true, null));
@@ -1214,7 +1220,7 @@ dash.calc('alertas_gerencia', {
     pend.forEach((p) => { const o = m.get(p.maestro) || { ok: 0, falta: 0 }; o.falta++; m.set(p.maestro, o); });
     const lista = [...m].sort((a, b) => (b[1].falta > 0) - (a[1].falta > 0) || b[1].falta - a[1].falta || a[0].localeCompare(b[0]));
     const sinEnviar = lista.filter(([, o]) => o.ok === 0 && o.falta > 0).map(([n]) => n.split(' ').slice(0, 2).join(' '));
-    $('hoy-faltan').textContent = R.sin_registro ? `Faltan ${C.N(R.sin_registro)}` : R.sin_registro === 0 ? 'Todos registrados' : 'Domingo';
+    $('hoy-faltan').textContent = R.sin_registro ? `Faltan ${C.N(R.sin_registro)}` : R.sin_registro === 0 ? 'Todos registrados' : (R.festivo ? 'Festivo' : 'Domingo');
     $('hoy-faltan').style.color = R.sin_registro ? 'var(--rojo)' : 'var(--verde)';
     $('hoy-txt').textContent = sinEnviar.length ? `Sin enviar: ${sinEnviar.join(', ')}.` : `${C.N(R.maestros_envio)} maestros enviaron.`;
     const ul = $('hoy-lista'); ul.replaceChildren();
