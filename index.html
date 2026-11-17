@@ -241,6 +241,20 @@ tr.sel td { background: var(--verde-suave); }
 #gerencia .g-kpi { border-left: 3px solid var(--linea); padding: 2px 0 2px 10px; min-width: 0; }
 #gerencia .g-kpi .k { font-size: 12.5px; color: var(--muted); }
 #gerencia .g-kpi .v { font: 700 24px var(--f-display); font-variant-numeric: tabular-nums; }
+#gerencia .g-grp { display: flex; flex-direction: column; }
+#gerencia .g-gr { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(110px, auto); gap: 6px 20px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--linea-2); }
+#gerencia .g-gr .n b { display: block; font-size: 16px; } #gerencia .g-gr .n small { color: var(--muted); font-size: 13px; }
+#gerencia .g-gr .v { text-align: right; font: 700 20px var(--f-display); font-variant-numeric: tabular-nums; } #gerencia .g-gr .v small { display: block; font: 500 13px var(--f-body); color: var(--muted); }
+#gerencia .g-gr .g-bar { height: 22px; border-radius: 8px; } #gerencia .g-gr .g-bar i { border-radius: 8px; }
+@media (max-width: 640px) { #gerencia .g-gr { grid-template-columns: minmax(0, 1fr) auto; } #gerencia .g-gr .g-bar { grid-column: 1 / -1; grid-row: 2; } }
+#gerencia .g-tapu tr.fr { cursor: pointer; } #gerencia .g-tapu tr.fr:hover td { background: var(--verde-suave); }
+#gerencia .g-tapu tr.fr td:first-child::before { content: '▸'; display: inline-block; width: 14px; color: var(--muted); }
+#gerencia .g-tapu tr.fr.abierto td:first-child::before { content: '▾'; }
+#gerencia .g-tapu tr.act td { background: var(--fondo); font-size: 13px; } #gerencia .g-tapu tr.act td:first-child { padding-left: 28px; }
+#gerencia .g-tapu tr.tot td, #gerencia .g-trp tr.tot td { font-weight: 700; border-top: 2px solid var(--linea); }
+#gerencia .g-st { display: inline-block; font-size: 12px; font-weight: 700; border-radius: 999px; padding: 2px 9px; white-space: nowrap; }
+#gerencia .g-st.ok { background: var(--verde-claro); color: var(--verde-osc); } #gerencia .g-st.warn { background: var(--ambar-claro); color: var(--ambar-txt); } #gerencia .g-st.bad { background: var(--rojo-claro); color: var(--rojo-txt); } #gerencia .g-st.na { background: var(--fondo); color: var(--muted); }
+#gerencia td.sem-ok { color: var(--verde); font-weight: 700; } #gerencia td.sem-warn { color: var(--ambar-txt); font-weight: 700; } #gerencia td.sem-bad { color: var(--rojo); font-weight: 700; }
 #gerencia .g-tbl { overflow-x: auto; }
 #gerencia .g-tbl table { width: 100%; border-collapse: collapse; font-size: 14px; }
 #gerencia .g-tbl th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; text-align: left; padding: 8px; border-bottom: 1px solid var(--linea); }
@@ -277,7 +291,7 @@ tr.sel td { background: var(--verde-suave); }
 <div class="co">
   <header class="top">
     <div class="in">
-      <div class="brand"><div class="logo">AIA</div><div><b>Control de Obra</b><span>AIRPLAN T1 JMC · Mano de obra, equipos y subcontratos</span></div></div>
+      <div class="brand"><div class="logo">AIA</div><div><b>Control de Obra</b><span>AIRPLAN T1 JMC · Mano de obra</span></div></div>
       <nav class="nav" role="tablist" aria-label="Vista">
         <button type="button" role="tab" id="tab-admin" aria-selected="true" aria-controls="admin">Control semanal</button>
         <button type="button" role="tab" id="tab-gerencia" aria-selected="false" aria-controls="gerencia">Gerencia</button>
@@ -287,7 +301,7 @@ tr.sel td { background: var(--verde-suave); }
   </header>
 
   <div class="wrap">
-    <p class="cargando" id="cargando">Leyendo la app, la nómina, la curva S y SINCO…</p>
+    <p class="cargando" id="cargando">Leyendo la app y la nómina…</p>
 
     <!-- ===================== ADMINISTRADOR ===================== -->
     <section id="admin" class="sec" role="tabpanel" aria-labelledby="tab-admin" hidden>
@@ -402,20 +416,61 @@ tr.sel td { background: var(--verde-suave); }
       <div style="display:flex;flex-direction:column;gap:8px">
         <span class="eyebrow" id="ger-eyebrow">Gerencia · mano de obra</span>
         <h1 class="lead">¿Cómo vamos con la mano de obra?</h1>
-        <span class="muted" style="font-size:14px">Maestros por administración (A) y oficiales y ayudantes de las actividades: proyectado, pagado real (gasto de nómina), acumulados y salario promedio. Cifras en millones de pesos.</span>
+        <span class="muted" style="font-size:14px">Personal completo, administrativo y operativo: nómina SINCO pagada contra la proyección, personas y gasto por grupo, y mano de obra contra el APU. Cifras en millones de pesos.</span>
       </div>
-      <nav class="g-chips" aria-label="Secciones de gerencia"><a class="g-chip" href="#g-sec-mae">1 · Maestros</a><a class="g-chip" href="#g-sec-oa">2 · Oficiales y ayudantes</a><a class="g-chip" href="#g-sec-he">3 · Horas extra</a><a class="g-chip" href="#g-sec-tot">4 · General</a></nav>
+      <nav class="g-chips" aria-label="Secciones de gerencia"><a class="g-chip" href="#g-sec-rp">1 · Real contra proyectado</a><a class="g-chip" href="#g-sec-per">2 · Personas y gasto</a><a class="g-chip" href="#g-sec-apu">3 · Mano de obra contra APU</a><a class="g-chip" href="#g-sec-mae">Detalle · maestros</a><a class="g-chip" href="#g-sec-oa">Detalle · oficiales y ayudantes</a><a class="g-chip" href="#g-sec-he">Horas extra</a></nav>
 
-      <!-- 1 · MAESTROS -->
-      <h2 class="h2" id="g-sec-mae">1 · Maestros · administración (A)</h2>
-      <p class="g-note" style="margin-top:-6px">Nómina SINCO de maestros contra la proyección del presupuesto de administración: cada maestro proyectado con su salario mensual, inicio y fin.</p>
+
+      <!-- 1 · REAL CONTRA PROYECTADO (personal completo) -->
+      <h2 class="h2" id="g-sec-rp">1 · Real contra proyectado · personal completo</h2>
+      <p class="g-note" style="margin-top:-6px" id="g-rp-sub"></p>
+      <div class="g-tiles" id="g-rp-k"></div>
+      <div class="card g-card">
+        <h2>Costo mensual y acumulado</h2>
+        <p class="sub">Un solo eje, en millones. Barras: costo de cada mes (llenas: pagado real; claras: proyección). Líneas: acumulado mes a mes, real y proyectado.</p>
+        <div class="g-leg" id="g-rp-leg"></div>
+        <div class="g-ch" id="g-rp-ch"></div>
+      </div>
+      <div class="card g-card">
+        <h2>Mes a mes</h2>
+        <div class="g-tbl"><table class="g-trp"><thead><tr><th>Mes</th><th class="n">Proyectado adm.</th><th class="n">Real adm.</th><th class="n">Proyectado oper.</th><th class="n">Real oper.</th><th class="n">Proyectado total</th><th class="n">Real total</th><th class="n">Real / proyectado</th><th class="n">Proyectado acumulado</th><th class="n">Real acumulado</th><th class="n">Saldo a favor acumulado</th></tr></thead><tbody id="g-rp-tb"></tbody></table></div>
+        <p class="g-note">Semáforo del mes: verde hasta 90 % de lo proyectado, ámbar hasta 110 %, rojo por encima. Saldo a favor acumulado = proyectado acumulado menos real acumulado.</p>
+      </div>
+
+      <!-- 2 · PERSONAS Y GASTO -->
+      <h2 class="h2" id="g-sec-per">2 · Personas y gasto · administrativo y operativo</h2>
+      <p class="g-note" style="margin-top:-6px" id="g-per-sub"></p>
+      <div class="g-tiles" id="g-per-k"></div>
+      <div>
+        <div class="card g-card"><h2>Participación en el gasto por mes</h2><div class="g-leg" id="g-pct-leg"></div><div class="g-ch" id="g-pct-ch"></div><p class="g-note">Porcentaje del costo de nómina de cada mes.</p></div>
+      </div>
+      <div class="card g-card">
+        <h2>Costo acumulado por grupo de cargo</h2>
+        <p class="sub">Personas distintas en el periodo, porcentaje del costo total y real contra lo proyectado a la fecha.</p>
+        <div class="g-grp" id="g-grp"></div>
+      </div>
+
+      <!-- 3 · MANO DE OBRA CONTRA APU -->
+      <h2 class="h2" id="g-sec-apu">3 · Mano de obra contra APU · por frente y actividad</h2>
+      <p class="g-note" style="margin-top:-6px">Oficiales y ayudantes de las actividades. <b>MO del APU</b>: mano de obra del presupuesto. <b>MO según avance</b>: la MO del APU multiplicada por el avance del frente en la curva S. <b>Pagado</b>: nómina SINCO cargada al frente, acumulada. <b>Saldo a favor</b>: MO según avance menos pagado; si es negativo, la cuadrilla propia ya costó más de lo que el APU reconoce por lo ejecutado.</p>
+      <div class="g-tiles" id="g-apu-k"></div>
+      <div class="card g-card">
+        <h2>Por frente</h2>
+        <p class="sub">Toque un frente para ver sus actividades.</p>
+        <div class="g-tbl"><table class="g-tapu"><thead><tr><th>Frente</th><th class="n">MO del APU</th><th class="n">Avance</th><th class="n">MO según avance</th><th class="n">Pagado</th><th class="n">Saldo a favor acumulado</th><th class="n">Pagado / MO según avance</th><th class="n">Consumido del APU</th><th>Estado</th></tr></thead><tbody id="g-apu-tb"></tbody></table></div>
+        <p class="g-note">Estado: <b style="color:var(--verde)">cubre</b> = pagado hasta el 90 % de la MO según avance · <b style="color:var(--ambar-txt)">al límite</b> = entre 90 % y 110 % · <b style="color:var(--rojo)">por encima</b> = más del 110 %. La lista de actividades compara lo pagado con la MO del APU de cada ítem.</p>
+      </div>
+
+      <!-- DETALLE · MAESTROS -->
+      <h2 class="h2" id="g-sec-mae">Detalle · maestros · administración (A)</h2>
+      <p class="g-note" style="margin-top:-6px" id="g-mae-sub">Nómina SINCO de maestros contra el promedio mensual del presupuesto de maestros, repartido en partes iguales en los meses de obra, igual que oficiales y ayudantes.</p>
       <div class="g-kpis5" id="g-k-mae"></div>
       <div class="card g-card">
         <h2>Mes a mes · proyectado y pagado real</h2>
         <div class="g-leg" data-leg="mes"></div>
         <div class="g-ch" id="g-ch-mae"></div>
-        <div class="g-tbl"><table class="g-tmes"><thead><tr><th>Mes</th><th class="n">Proyectado</th><th class="n">Pagado real</th><th class="n">Diferencia del mes</th><th class="n">Proyectado acumulado</th><th class="n">Pagado acumulado</th><th class="n">Diferencia acumulada</th></tr></thead><tbody id="g-tb-mae"></tbody></table></div>
-        <p class="g-note">Diferencia = proyectado menos pagado: positiva es lo que va por debajo de la proyección (ahorro a la fecha), negativa es sobrecosto.</p>
+        <div class="g-tbl"><table class="g-tmes"><thead><tr><th>Mes</th><th class="n">Proyectado</th><th class="n">Pagado real</th><th class="n">Diferencia del mes</th><th class="n">Proyectado acumulado</th><th class="n">Pagado acumulado</th><th class="n">Saldo a favor acumulado</th></tr></thead><tbody id="g-tb-mae"></tbody></table></div>
+        <p class="g-note">Diferencia del mes = proyectado menos pagado de ese mes. Saldo a favor acumulado = suma de las diferencias hasta la fecha; si es negativo, el acumulado va por encima de lo proyectado.</p>
       </div>
       <div class="g-grid2e">
         <div class="card g-card"><h2>Acumulado · proyectado contra pagado</h2><div class="g-leg" data-leg="acc-mae"></div><div class="g-ch" id="g-ch-mae-acc"></div><p class="g-note" id="g-n-mae-acc"></p></div>
@@ -433,7 +488,7 @@ tr.sel td { background: var(--verde-suave); }
       </div>
 
       <!-- 2 · OFICIALES Y AYUDANTES -->
-      <h2 class="h2" id="g-sec-oa">2 · Oficiales y ayudantes · actividades</h2>
+      <h2 class="h2" id="g-sec-oa">Detalle · oficiales y ayudantes de las actividades</h2>
       <p class="g-note" style="margin-top:-6px" id="g-base"></p>
       <div class="g-chips" id="g-chips" role="group" aria-label="Filtrar por frente"></div>
       <div class="g-kpis5" id="g-k-oa"></div>
@@ -441,7 +496,7 @@ tr.sel td { background: var(--verde-suave); }
         <h2 id="g-t-cua">Mes a mes · proyectado APU y pagado real</h2>
         <div class="g-leg" data-leg="mes"></div>
         <div class="g-ch" id="g-ch-cua"></div>
-        <div class="g-tbl"><table class="g-tmes"><thead><tr><th>Mes</th><th class="n">Proyectado</th><th class="n">Pagado real</th><th class="n">Diferencia del mes</th><th class="n">Proyectado acumulado</th><th class="n">Pagado acumulado</th><th class="n">Diferencia acumulada</th></tr></thead><tbody id="g-tb-cua"></tbody></table></div>
+        <div class="g-tbl"><table class="g-tmes"><thead><tr><th>Mes</th><th class="n">Proyectado</th><th class="n">Pagado real</th><th class="n">Diferencia del mes</th><th class="n">Proyectado acumulado</th><th class="n">Pagado acumulado</th><th class="n">Saldo a favor acumulado</th></tr></thead><tbody id="g-tb-cua"></tbody></table></div>
         <p class="g-note" id="g-note-cua"></p>
       </div>
       <div class="g-grid2e">
@@ -472,7 +527,7 @@ tr.sel td { background: var(--verde-suave); }
       </div>
 
       <!-- 3 · HORAS EXTRA -->
-      <h2 class="h2" id="g-sec-he">3 · Horas extra y recargos</h2>
+      <h2 class="h2" id="g-sec-he">Horas extra y recargos</h2>
       <p class="g-note" style="margin-top:-6px" id="g-he-sub"></p>
       <div class="g-grid2e">
         <div class="card g-card"><h2>Pagado sobre el básico, mes a mes</h2><div class="g-leg" data-leg="he"></div><div class="g-ch" id="g-ch-he"></div><p class="g-note" id="g-n-he"></p></div>
@@ -484,16 +539,16 @@ tr.sel td { background: var(--verde-suave); }
       </div>
 
       <!-- 4 · GENERAL -->
-      <h2 class="h2" id="g-sec-tot">4 · General · mano de obra total</h2>
+      <h2 class="h2" id="g-sec-tot">Detalle · maestros más oficiales y ayudantes</h2>
       <p class="g-note" style="margin-top:-6px">Maestros más oficiales y ayudantes de las actividades.</p>
       <div class="g-tiles" id="g-tiles"></div>
       <div class="g-grid2e">
         <div class="card g-card"><h2>Acumulado · proyectado contra pagado</h2><div class="g-leg" data-leg="acc-tot"></div><div class="g-ch" id="g-ch-tot-acc"></div><p class="g-note" id="g-n-tot-acc"></p></div>
-        <div class="card g-card"><h2>Ahorro de cada mes y acumulado</h2><div class="g-leg" data-leg="aho"></div><div class="g-ch" id="g-ch-tot"></div><p class="g-note" id="g-note-tot"></p></div>
+        <div class="card g-card"><h2>Diferencia de cada mes y saldo a favor acumulado</h2><div class="g-leg" data-leg="aho"></div><div class="g-ch" id="g-ch-tot"></div><p class="g-note" id="g-note-tot"></p></div>
       </div>
       <div class="card g-card">
         <h2>Mes a mes · total</h2>
-        <div class="g-tbl"><table class="g-tmes"><thead><tr><th>Mes</th><th class="n">Proyectado</th><th class="n">Pagado real</th><th class="n">Diferencia del mes</th><th class="n">Proyectado acumulado</th><th class="n">Pagado acumulado</th><th class="n">Diferencia acumulada</th></tr></thead><tbody id="g-tb-tot"></tbody></table></div>
+        <div class="g-tbl"><table class="g-tmes"><thead><tr><th>Mes</th><th class="n">Proyectado</th><th class="n">Pagado real</th><th class="n">Diferencia del mes</th><th class="n">Proyectado acumulado</th><th class="n">Pagado acumulado</th><th class="n">Saldo a favor acumulado</th></tr></thead><tbody id="g-tb-tot"></tbody></table></div>
       </div>
       <p class="note" id="nota-ger">Fuentes: nómina SINCO (BD_Nomina_MO) y el mes en curso estimado con la app, llevado al cierre del mes por días hábiles; proyección de personal de la A y MO de los APU (Parametros_Alertas); el proyectado de oficiales y ayudantes reparte la MO de los APU en partes iguales en los meses de obra.</p>
     </section>
@@ -867,17 +922,13 @@ dash.calc('pct_gerencia', {
 });
 dash.calc('alertas_gerencia', {
   title: 'Alertas para gerencia',
-  description: 'Una alerta por tema (cobro, subcontratos, mano de obra, actividades, equipos, horas extra) con su cifra y la acción sugerida, a partir de los indicadores y frentes.',
+  description: 'Una alerta por tema de mano de obra (frentes, administración, actividades, horas extra) con su cifra y la acción sugerida, a partir de los indicadores y frentes.',
   inputs: ['indicadores_gerencia', 'frentes_gerencia', 'equipos_frente', 'actividades_sobre_apu', 'horas_extra_mes'],
   fn: (indicadores_gerencia, frentes_gerencia, equipos_frente, actividades_sobre_apu, horas_extra_mes) => {
     const v = Object.fromEntries(indicadores_gerencia.map((r) => [r.indicador, r.valor]));
     const m = (x) => '$\u00a0' + Math.round(x * 1000).toLocaleString('es-CO');
     const pc = (x) => Math.round(x * 100) + ' %';
     const out = [];
-    out.push({ id: 'cobro', tema: 'Cobro', nivel: v.ejecutado_sin_cobrar > 5000 ? 'alta' : 'media', titulo: 'Obra ejecutada sin cobrar', cifra: m(v.ejecutado_sin_cobrar),
-      detalle: `Se ha cobrado el ${pc(v.cobrado / v.ejecutado)} de lo ejecutado según la curva S.`, accion: 'Llevar al próximo corte (3 o 24 del mes) los frentes con mayor ejecutado sin cobrar.' });
-    out.push({ id: 'sub', tema: 'Subcontratos', nivel: v.sub_sin_cobrar > 1000 ? 'alta' : 'media', titulo: 'Pagado a subcontratistas por obra sin cobrar', cifra: m(v.sub_sin_cobrar),
-      detalle: `Además hay ${m(v.sub_sobre_sinco)} contratados por encima del valor SINCO en ${v.sub_lineas_sobre} líneas y ${m(v.anticipo_por_amortizar)} de anticipos por amortizar.`, accion: 'Antes de pagar saldos o tramitar mayores valores, revisar las líneas sobre SINCO y exigir amortización de anticipos en cada acta.' });
     const peor = frentes_gerencia.filter((f) => f.pct_gastado != null && f.mo_meta > 1).sort((a, b) => b.pct_gastado - a.pct_gastado)[0];
     if (peor) out.push({ id: 'mo', tema: 'Mano de obra', nivel: peor.pct_gastado > 1 ? 'alta' : 'media', titulo: `Nómina propia en ${peor.frente}`, cifra: pc(peor.pct_gastado),
       detalle: `de la MO que corresponde a lo ejecutado (${m(peor.mo_real)} contra ${m(peor.mo_meta)}). Al ritmo actual cierra en ${m(peor.mo_cierre)} contra ${m(peor.mo_ppto)} del APU.`, accion: 'Revisar cuadrilla y rendimiento del frente; mover personal o subcontratar las actividades que más pierden.' });
@@ -887,9 +938,6 @@ dash.calc('alertas_gerencia', {
     const top = actividades_sobre_apu.slice().sort((a, b) => b.exceso - a.exceso).slice(0, 3);
     out.push({ id: 'act', tema: 'Actividades', nivel: v.act_sobre_apu > 30 ? 'alta' : 'media', titulo: `${v.act_n_sobre_apu} actividades con nómina sobre el APU`, cifra: m(v.act_sobre_apu),
       detalle: 'Las mayores: ' + top.map((a) => `${a.cod} (${m(a.exceso)})`).join(', ') + `. Otras ${v.act_n_sin_mo} actividades tienen nómina sin MO en el APU (${m(v.act_sin_mo)}).`, accion: 'Trasiegos y retiros de escombro concentran el exceso: comparar con el precio de los contratistas de MO antes de seguir con cuadrilla propia.' });
-    const eq = equipos_frente.filter((e) => e.rel != null && e.real > 3).sort((a, b) => b.rel - a.rel)[0];
-    out.push({ id: 'eq', tema: 'Equipos', nivel: v.equipos_facturado > v.equipos_meta ? 'alta' : 'media', titulo: 'Equipos facturados contra lo ganado', cifra: pc(v.equipos_facturado / v.equipos_meta),
-      detalle: `${m(v.equipos_facturado)} facturados jul–sep contra ${m(v.equipos_meta)} del componente de equipo ganado.` + (eq ? ` El mayor desfase es ${eq.frente}: ${m(eq.real)} contra ${m(eq.meta)}.` : ''), accion: 'Devolver equipos ociosos y cargar cada alquiler al código de la actividad que lo usa.' });
     const he = horas_extra_mes.slice(-3); const pag = he.reduce((s, r) => s + r.pagado, 0), base = he.reduce((s, r) => s + r.base, 0);
     out.push({ id: 'he', tema: 'Horas extra', nivel: pag / base > v.he_tope ? 'alta' : 'baja', titulo: 'Horas extra sobre el básico (últimos 3 meses)', cifra: pc(pag / base),
       detalle: `Tope ${pc(v.he_tope)}. Pagado ${m(pag)} sobre un básico de ${m(base)}.`, accion: 'Mantener la autorización previa de extras y revisar a quienes pasan del 40 % varios meses.' });
@@ -1310,7 +1358,7 @@ dash.calc('alertas_gerencia', {
   // 1 Maestros (A) contra la proyección de administración; 2 oficiales y ayudantes contra la MO de los APU repartida en partes
   // iguales en los meses de obra; 3 horas extra; 4 total. El mes sin nómina se estima con la app y se lleva al cierre por días hábiles.
   const MESL = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-  const gf1 = (v) => v == null ? '—' : (Math.round(v * 10) / 10).toLocaleString('es-CO', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const gf1 = (v) => v == null ? '—' : ((Math.round(v * 10) / 10) || 0).toLocaleString('es-CO', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const gf2 = (v) => v == null ? '—' : (Math.round(v * 100) / 100).toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const gpc = (v) => v == null || !isFinite(v) ? '—' : Math.round(v * 100) + ' %';
   const gsum = (a) => a.reduce((s, x) => s + (x || 0), 0);
@@ -1325,39 +1373,44 @@ dash.calc('alertas_gerencia', {
   let gid = 0;
   const HATCH = 'repeating-linear-gradient(45deg,var(--ambar) 0 2px,transparent 2px 5px)';
   const LEG = {
-    mes: [['var(--g-proy)', 'Proyectado'], ['var(--verde)', 'Pagado real (gasto de nómina)'], ['var(--g-fut)', 'Proyectado por venir'], [HATCH, 'Mes estimado (app)']],
+    mes: [['var(--g-proy)', 'Proyectado del mes (sombreado)'], ['var(--verde)', 'Pagado real (nómina SINCO)'], ['var(--rojo)', 'Pagado por encima de lo proyectado'], ['var(--g-fut)', 'Proyectado por venir'], [HATCH, 'Mes estimado (app)']],
     'acc-mae': [['var(--g-proy)', 'Proyectado acumulado', 1], ['var(--verde)', 'Pagado acumulado', 1], ['var(--tinta)', 'Presupuesto de maestros', 1]],
     'acc-oa': [['var(--g-proy)', 'Proyectado acumulado', 1], ['var(--verde)', 'Pagado acumulado', 1], ['var(--tinta)', 'MO total en los APU', 1]],
     'acc-tot': [['var(--g-proy)', 'Proyectado acumulado', 1], ['var(--verde)', 'Pagado acumulado', 1]],
     sal: [['var(--g-proy)', 'Proyectado', 1], ['var(--verde)', 'Real (nómina)', 1]],
-    aho: [['var(--verde)', 'Ahorro del mes'], ['var(--rojo)', 'Sobrecosto del mes'], ['var(--tinta)', 'Ahorro acumulado', 1], ['var(--verde)', 'Mes estimado (app)', 0, .45]],
-    he: [['var(--g-proy)', 'Proyectado (tope sobre el básico)'], ['var(--ambar)', 'Pagado en extras y recargos']],
+    aho: [['var(--verde)', 'Mes por debajo de lo proyectado'], ['var(--rojo)', 'Mes por encima de lo proyectado'], ['var(--tinta)', 'Saldo a favor acumulado', 1], ['var(--verde)', 'Mes estimado (app)', 0, .45]],
+    he: [['var(--g-proy)', 'Tope del mes (sombreado)'], ['var(--verde)', 'Pagado en extras y recargos'], ['var(--rojo)', 'Pagado por encima del tope']],
   };
   function leyendas() {
     document.querySelectorAll('#gerencia [data-leg]').forEach((b) => {
       b.innerHTML = LEG[b.dataset.leg].map(([c, t, linea, op]) => `<span><i style="background:${c};${linea ? 'height:3px;width:18px;' : ''}${op ? 'opacity:' + op + ';' : ''}${c === HATCH ? 'border:1px solid var(--ambar)' : ''}"></i>${t}</span>`).join('')
-        + (b.dataset.leg === 'mes' ? '<span><b style="color:var(--rojo)">rojo</b>&nbsp;= pagado por encima de lo proyectado del mes</span>' : '');
+        ;
     });
   }
   // barras proyectado / pagado por mes, con su valor encima
   function gBarras(host, o) {
     host.replaceChildren(); const W = 920, H = 310, L = 46, R = 10, T = 26, B = 30, NM = o.P.length, CUT = o.cut;
-    const vals = [...o.P, ...o.G.slice(0, CUT), o.est || 0, o.ref || 0]; const sc = escala(Math.max(...vals) * 1.06);
+    const vals = [...o.P, ...o.G.slice(0, CUT), o.est || 0, o.ref || 0]; const sc = escala(Math.max(...vals) * 1.14);
     const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': o.label }, host);
     const id = 'gh' + (++gid); const pat = sv('pattern', { id, width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, sv('defs', {}, svg));
     sv('rect', { width: 6, height: 6, style: 'fill:var(--panel)' }, pat); sv('rect', { width: 2.5, height: 6, style: 'fill:var(--ambar)' }, pat);
     const y = (v) => T + (H - T - B) * (1 - v / sc.hi);
     for (let v = 0; v <= sc.hi; v += sc.st) { sv('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), style: 'stroke:var(--linea-2)' }, svg); sv('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = v; }
-    const gw = (W - L - R) / NM, bw = Math.min(24, (gw - 8) / 2);
+    const gw = (W - L - R) / NM, sw = Math.min(46, gw * .78), bw = Math.min(26, sw * .55);
     o.P.forEach((p, i) => {
-      const cx = L + gw * i + gw / 2;
-      const bars = i < CUT ? [[p, 'fill:var(--g-proy)'], [o.G[i], 'fill:var(--verde)']] : i === CUT && o.est != null ? [[p, 'fill:var(--g-fut)'], [o.est, `fill:url(#${id});stroke:var(--ambar)`]] : [[p, 'fill:var(--g-fut)']];
-      bars.forEach(([v, st], j) => {
-        const n = bars.length, x = cx - (n * bw + (n - 1) * 2) / 2 + j * (bw + 2), h = Math.max(0, y(0) - y(v));
-        const r = sv('rect', { x, y: y(0) - h, width: bw, height: h, rx: 2, style: st }, svg);
-        sv('title', {}, r).textContent = `${o.ML[i]} ${j ? (i < CUT ? 'pagado' : 'estimado app al cierre') : 'proyectado'} ${gf1(v)} M`;
-        if (i <= CUT) sv('text', { x: x + bw / 2, y: y(0) - h - 5, 'text-anchor': 'middle', class: j === 1 && i < CUT && v > p ? 'lbr' : 'lbl' }, svg).textContent = Math.round(v);
-      });
+      const cx = L + gw * i + gw / 2, fut = i > CUT || (i === CUT && o.est == null);
+      const sh = sv('rect', { x: cx - sw / 2, y: y(p), width: sw, height: Math.max(0, y(0) - y(p)), rx: 3, style: `fill:var(${fut ? '--g-fut' : '--g-proy'});opacity:${fut ? 1 : .55}` }, svg);
+      sv('line', { x1: cx - sw / 2, x2: cx + sw / 2, y1: y(p), y2: y(p), style: `stroke:var(--muted);stroke-width:1.5;stroke-dasharray:${fut ? '3 3' : '0'}` }, svg);
+      sv('title', {}, sh).textContent = `${o.ML[i]} proyectado ${gf1(p)} M`;
+      const v = i < CUT ? o.G[i] : i === CUT ? o.est : null;
+      if (v != null) {
+        const h = Math.max(0, y(0) - y(v)), st = i < CUT ? `fill:var(${v > p ? '--rojo' : '--verde'})` : `fill:url(#${id});stroke:var(--ambar)`;
+        const r = sv('rect', { x: cx - bw / 2, y: y(0) - h, width: bw, height: h, rx: 2, style: st }, svg);
+        sv('title', {}, r).textContent = `${o.ML[i]} ${i < CUT ? 'pagado' : 'estimado app al cierre'} ${gf1(v)} M`;
+        const yl = Math.min(y(v), y(p));
+        sv('text', { x: cx, y: yl - 6, 'text-anchor': 'middle', class: v > p && i < CUT ? 'lbr' : 'lbl' }, svg).textContent = Math.round(v);
+        sv('text', { x: cx, y: yl - 20, 'text-anchor': 'middle', style: 'font-size:11px' }, svg).textContent = 'proy ' + Math.round(p);
+      } else if (i <= CUT + 1) sv('text', { x: cx, y: y(p) - 6, 'text-anchor': 'middle', style: 'font-size:11px' }, svg).textContent = Math.round(p);
       sv('text', { x: cx, y: H - 10, 'text-anchor': 'middle' }, svg).textContent = o.ML[i];
       if (i === CUT) sv('line', { x1: L + gw * i, x2: L + gw * i, y1: T - 10, y2: H - B, style: 'stroke:var(--muted);stroke-dasharray:3 4' }, svg);
     });
@@ -1392,6 +1445,8 @@ dash.calc('alertas_gerencia', {
     const x = (i) => L + (W - L - R) * (i + .5) / n, y = (v) => T + (H - T - B) * (1 - v / sc.hi);
     for (let v = 0; v <= sc.hi; v += sc.st) { sv('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), style: 'stroke:var(--linea-2)' }, svg); sv('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = v; }
     for (let i = 0; i < n; i++) sv('text', { x: x(i), y: H - 10, 'text-anchor': 'middle' }, svg).textContent = ML[i];
+    { const pp = PR.slice(0, n).map((r, i) => r.prom == null ? null : [x(i), y(r.prom)]).filter(Boolean);
+      if (pp.length) sv('polygon', { points: [[pp[0][0], y(0)], ...pp, [pp[pp.length - 1][0], y(0)]].map((q) => q.join(',')).join(' '), style: 'fill:var(--g-proy);opacity:.35' }, svg); }
     const linea = (arr, col, abajo) => {
       const pts = arr.map((r, i) => r.prom == null ? null : [x(i), y(r.prom)]).filter(Boolean);
       sv('polyline', { points: pts.map((p) => p.join(',')).join(' '), style: `fill:none;stroke:var(${col});stroke-width:3` }, svg);
@@ -1404,14 +1459,14 @@ dash.calc('alertas_gerencia', {
   function gAhorro(host, rows) {
     host.replaceChildren(); const W = 620, H = 300, L = 46, R = 12, T = 24, B = 30;
     const vals = rows.flatMap((r) => [r.d, r.a, 0]); const sc = escala(Math.max(...vals), Math.min(...vals));
-    const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Ahorro de cada mes y acumulado' }, host);
+    const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Diferencia de cada mes y saldo a favor acumulado' }, host);
     const y = (v) => T + (H - T - B) * (sc.hi - v) / (sc.hi - sc.lo);
     for (let v = sc.lo; v <= sc.hi + 1e-9; v += sc.st) { sv('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), style: `stroke:var(${v === 0 ? '--linea' : '--linea-2'});stroke-width:${v === 0 ? 2 : 1}` }, svg); sv('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = v; }
     const gw = (W - L - R) / rows.length, bw = gw * .45, pts = [];
     rows.forEach((r, i) => {
       const cx = L + gw * i + gw / 2;
       const rc = sv('rect', { x: cx - bw / 2, y: Math.min(y(0), y(r.d)), width: bw, height: Math.max(1, Math.abs(y(r.d) - y(0))), rx: 2, style: `fill:var(${r.d >= 0 ? '--verde' : '--rojo'});opacity:${r.est ? .45 : 1}` }, svg);
-      sv('title', {}, rc).textContent = `${r.m}: ${r.d >= 0 ? 'ahorro' : 'sobrecosto'} ${gf1(Math.abs(r.d))} M`;
+      sv('title', {}, rc).textContent = `${r.m}: ${r.d >= 0 ? 'por debajo de lo proyectado' : 'por encima de lo proyectado'} ${gf1(Math.abs(r.d))} M`;
       sv('text', { x: cx, y: H - 10, 'text-anchor': 'middle' }, svg).textContent = r.m + (r.est ? ' (est.)' : ''); pts.push([cx, y(r.a)]);
     });
     sv('polyline', { points: pts.map((p) => p.join(',')).join(' '), style: 'fill:none;stroke:var(--tinta);stroke-width:2.5' }, svg);
@@ -1436,7 +1491,126 @@ dash.calc('alertas_gerencia', {
   };
   const kpis = (id, arr) => html(id, arr.map((k) => `<div class="g-tile"><span class="k">${k[0]}</span><span class="v">${k[1]}${k[2] ? ` <small>${k[2]}</small>` : ''}</span>${k[3] ? `<span class="s">${k[3]}</span>` : ''}${k[4] ? `<span class="g-pill ${k[4][0]}">${k[4][1]}</span>` : ''}</div>`).join(''));
 
+
+  // ===================== GERENCIA · personal completo =====================
+  function drawGerTotal() {
+    const T = ok('mo_total') ? D('mo_total') : null;
+    if (!T || !T.mes) { html('g-rp-k', '<p class="vacio">Faltan la proyección de personal o la nómina completa.</p>'); return; }
+    const mi = (s) => +s.slice(5, 7) - 1, yr = (s) => s.slice(2, 4);
+    const R = T.mes, NM = R.length, CUT = R.filter((r) => r.real).length, ult = MESL[mi(T.corte)] + ' ' + T.corte.slice(0, 4);
+    const ML = R.map((r) => MESES[mi(r.mes)]);
+    const pT = R.map((r) => (r.p_adm || 0) + (r.p_ope || 0)), rT = R.map((r) => r.real ? (r.r_adm || 0) + (r.r_ope || 0) : null);
+    const pA = [], rA = []; let a = 0; pT.forEach((v) => { a += v; pA.push(a); }); a = 0; rT.slice(0, CUT).forEach((v) => { a += v; rA.push(a); });
+    const proyF = pA[CUT - 1], realF = rA[CUT - 1], ahorro = proyF - realF, proyTot = pA[NM - 1], resto = proyTot - proyF, cierre = realF + resto, ppto = (T.ppto.adm || 0) + (T.ppto.ope || 0);
+    const sumK = (k, n = CUT) => gsum(R.slice(0, n).map((r) => r[k] || 0));
+    $('g-rp-sub').textContent = `Nómina SINCO pagada de ${MESL[mi(R[0].mes)]} a ${ult} contra la proyección de personal administrativo y operativo. La proyección sigue hasta ${MESL[mi(R[NM - 1].mes)]} ${R[NM - 1].mes.slice(0, 4)}.`;
+    kpis('g-rp-k', [
+      ['Pagado real a ' + ult, gf1(realF), 'M', `Proyectado ${gf1(proyF)} M`, [gst(realF / proyF)[0], gpc(realF / proyF) + ' de lo proyectado']],
+      ['Saldo a favor acumulado', gsg(ahorro), 'M', `Administrativo ${gsg(sumK('p_adm') - sumK('r_adm'))} · operativo ${gsg(sumK('p_ope') - sumK('r_ope'))}`],
+      ['Cierre estimado', gf1(cierre), 'M', `Real a la fecha + proyección restante (${gf1(resto)} M). Proyección total ${gf1(proyTot)} M`],
+      ['Frente al presupuesto', gsg(ppto - cierre), 'M', `Presupuesto de personal ${gf1(ppto)} M`, [cierre > ppto ? 'bad' : 'ok', cierre > ppto ? 'Cierre por encima' : 'Cierre por debajo']]]);
+    // gráfica combinada
+    $('g-rp-leg').innerHTML = [['var(--verde)', 'Administrativo'], ['var(--ambar)', 'Operativo'], ['var(--rojo)', 'Real acumulado', 1], ['var(--tinta)', 'Proyectado acumulado', 1]]
+      .map(([c, t, l]) => `<span><i style="background:${c};${l ? 'height:3px;width:18px;' : ''}"></i>${t}</span>`).join('');
+    const host = $('g-rp-ch'); host.replaceChildren();
+    const W = 980, H = 420, L = 58, Rm = 16, Tm = 30, B = 44, sc = escala(Math.max(...pA, ...rA) * 1.04);
+    const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Costo mensual real y proyectado, con acumulados' }, host);
+    const y = (v) => Tm + (H - Tm - B) * (1 - v / sc.hi), gw = (W - L - Rm) / NM, xc = (i) => L + gw * i + gw / 2, bw = Math.min(34, gw * .62);
+    for (let v = 0; v <= sc.hi; v += sc.st) { sv('line', { x1: L, x2: W - Rm, y1: y(v), y2: y(v), style: 'stroke:var(--linea-2)' }, svg); sv('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = v.toLocaleString('es-CO'); }
+    sv('text', { x: 4, y: 14 }, svg).textContent = 'Millones de pesos';
+    R.forEach((r, i) => {
+      const real = r.real, va = real ? r.r_adm : r.p_adm, vo = real ? r.r_ope : r.p_ope, op = real ? 1 : .35;
+      const ra = sv('rect', { x: xc(i) - bw / 2, y: y(va), width: bw, height: y(0) - y(va), style: `fill:var(--verde);opacity:${op}` }, svg);
+      const ro = sv('rect', { x: xc(i) - bw / 2, y: y(va + vo), width: bw, height: y(va) - y(va + vo), style: `fill:var(--ambar);opacity:${op}` }, svg);
+      sv('title', {}, ra).textContent = `${ML[i]} ${real ? 'real' : 'proyectado'} administrativo ${gf1(va)} M`; sv('title', {}, ro).textContent = `${ML[i]} ${real ? 'real' : 'proyectado'} operativo ${gf1(vo)} M`;
+      if (real) sv('text', { x: xc(i), y: y(va + vo) - 6, 'text-anchor': 'middle', class: 'lbl', style: 'paint-order:stroke;stroke:var(--panel);stroke-width:3px' }, svg).textContent = Math.round(va + vo);
+      sv('text', { x: xc(i), y: H - 24, 'text-anchor': 'middle' }, svg).textContent = ML[i];
+      if (i === 0 || r.mes.slice(0, 4) !== R[i - 1].mes.slice(0, 4)) sv('text', { x: xc(i), y: H - 8, 'text-anchor': 'middle', style: 'font-size:11px' }, svg).textContent = r.mes.slice(0, 4);
+    });
+    const xcut = L + gw * CUT; sv('line', { x1: xcut, x2: xcut, y1: Tm - 14, y2: H - B, style: 'stroke:var(--muted);stroke-dasharray:3 4' }, svg);
+    sv('text', { x: xcut + 6, y: Tm - 4 }, svg).textContent = 'corte ' + ML[CUT - 1];
+    sv('polyline', { points: pA.map((v, i) => xc(i) + ',' + y(v)).join(' '), style: 'fill:none;stroke:var(--tinta);stroke-width:2.5;stroke-dasharray:7 5' }, svg);
+    pA.forEach((v, i) => sv('circle', { cx: xc(i), cy: y(v), r: 4, style: 'fill:var(--panel);stroke:var(--tinta);stroke-width:2' }, svg));
+    sv('polyline', { points: rA.map((v, i) => xc(i) + ',' + y(v)).join(' '), style: 'fill:none;stroke:var(--rojo);stroke-width:3' }, svg);
+    rA.forEach((v, i) => sv('circle', { cx: xc(i), cy: y(v), r: 4, style: 'fill:var(--rojo)' }, svg));
+    const lab = (x, yy, t, c, anc) => sv('text', { x, y: yy, 'text-anchor': anc || 'end', class: 'lbl', style: `fill:${c};paint-order:stroke;stroke:var(--panel);stroke-width:4px` }, svg).textContent = t;
+    lab(xc(CUT - 1) - 8, y(pA[CUT - 1]) - 12, 'Proy. ' + Math.round(proyF).toLocaleString('es-CO'), 'var(--tinta)');
+    lab(xc(CUT - 1) - 8, y(rA[CUT - 1]) + 22, 'Real ' + Math.round(realF).toLocaleString('es-CO'), 'var(--rojo)');
+    lab(xc(NM - 1), y(pA[NM - 1]) - 12, Math.round(proyTot).toLocaleString('es-CO'), 'var(--tinta)');
+    // tabla
+    let ap = 0, ar = 0, h = '';
+    R.slice(0, CUT).forEach((r, i) => {
+      const p = pT[i], g = rT[i]; ap += p; ar += g; const q = g / p, cl = q > 1.1 ? 'sem-bad' : q > .9 ? 'sem-warn' : 'sem-ok';
+      h += `<tr><td>${MESL[mi(r.mes)]} ${r.mes.slice(0, 4)}</td><td class="n">${gf1(r.p_adm)}</td><td class="n">${gf1(r.r_adm)}</td><td class="n">${gf1(r.p_ope)}</td><td class="n">${gf1(r.r_ope)}</td><td class="n">${gf1(p)}</td><td class="n"><b>${gf1(g)}</b></td><td class="n ${cl}">${gpc(q)}</td><td class="n">${gf1(ap)}</td><td class="n">${gf1(ar)}</td><td class="n ${ap - ar >= 0 ? 'pos' : 'neg'}">${gsg(ap - ar)}</td></tr>`;
+    });
+    h += `<tr class="tot"><td>Resto de la obra (proyectado)</td><td class="n">${gf1(gsum(R.slice(CUT).map((r) => r.p_adm)))}</td><td class="n">—</td><td class="n">${gf1(gsum(R.slice(CUT).map((r) => r.p_ope)))}</td><td class="n">—</td><td class="n">${gf1(resto)}</td><td class="n">—</td><td></td><td class="n">${gf1(proyTot)}</td><td class="n">${gf1(cierre)}</td><td class="n">cierre estimado</td></tr>`;
+    html('g-rp-tb', h);
+
+    // ---------- 2 · personas y gasto ----------
+    const u = R[CUT - 1], nA = u.n_adm || 0, nO = u.n_ope || 0, cA = u.r_adm || 0, cO = u.r_ope || 0;
+    $('g-per-sub').textContent = `Nómina SINCO de ${MESL[mi(u.mes)]}: personas pagadas en el mes y su parte del costo.`;
+    kpis('g-per-k', [
+      ['Personas en ' + MESL[mi(u.mes)], nA + nO, '', `${nA} administrativas · ${nO} operativas`],
+      ['Administrativas', nA, '', `${gpc(nA / (nA + nO))} de las personas · ${gf1(cA)} M`, ['ok', gpc(cA / (cA + cO)) + ' del gasto']],
+      ['Operativas', nO, '', `${gpc(nO / (nA + nO))} de las personas · ${gf1(cO)} M`, ['warn', gpc(cO / (cA + cO)) + ' del gasto']],
+      ['Acumulado a ' + ult, gf1(realF), 'M', `Administrativo ${gpc(sumK('r_adm') / realF)} · operativo ${gpc(sumK('r_ope') / realF)}`]]);
+    const leg2 = [['var(--verde)', 'Administrativas'], ['var(--ambar)', 'Operativas'], ['var(--tinta)', 'Proyectadas', 1]];
+    $('g-pct-leg').innerHTML = [['var(--verde)', 'Administrativo'], ['var(--ambar)', 'Operativo']].map(([c, t]) => `<span><i style="background:${c}"></i>${t}</span>`).join('');
+    const RR = R.slice(0, CUT), ML2 = ML.slice(0, CUT);
+    (() => {
+      const hb = $('g-pct-ch'); hb.replaceChildren(); const W = 1000, H = 280, L = 40, Rm = 10, Tm = 12, B = 30;
+      const sg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Participación en el gasto por mes' }, hb);
+      const y = (v) => Tm + (H - Tm - B) * (1 - v), gw = (W - L - Rm) / RR.length, bw = gw * .55;
+      [0, .25, .5, .75, 1].forEach((v) => { sv('line', { x1: L, x2: W - Rm, y1: y(v), y2: y(v), style: 'stroke:var(--linea-2)' }, sg); sv('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, sg).textContent = Math.round(v * 100) + '%'; });
+      RR.forEach((r, i) => {
+        const cx = L + gw * i + gw / 2, t = (r.r_adm || 0) + (r.r_ope || 0), pa = t ? r.r_adm / t : 0;
+        sv('rect', { x: cx - bw / 2, y: y(pa), width: bw, height: y(0) - y(pa), style: 'fill:var(--verde)' }, sg);
+        sv('rect', { x: cx - bw / 2, y: y(1), width: bw, height: y(pa) - y(1), style: 'fill:var(--ambar)' }, sg);
+        sv('text', { x: cx, y: y(pa / 2) + 4, 'text-anchor': 'middle', style: 'fill:#fff;font-weight:700' }, sg).textContent = Math.round(pa * 100) + '%';
+        sv('text', { x: cx, y: y(pa + (1 - pa) / 2) + 4, 'text-anchor': 'middle', style: 'fill:#3a2a00;font-weight:700' }, sg).textContent = Math.round((1 - pa) * 100) + '%';
+        sv('text', { x: cx, y: H - 10, 'text-anchor': 'middle' }, sg).textContent = ML2[i];
+      });
+    })();
+    const G = T.grupos.slice().sort((a, b) => b.real - a.real), gmax = Math.max(...G.map((g) => g.real), 1), gtot = gsum(G.map((g) => g.real));
+    html('g-grp', G.map((g) => { const q = g.proy ? g.real / g.proy : null, s_ = q == null ? ['na', 'sin proyección'] : q > 1.1 ? ['bad', 'por encima'] : q > .9 ? ['warn', 'al límite'] : ['ok', 'por debajo'];
+      return `<div class="g-gr"><div class="n"><b>${esc(g.g)}</b><small>${g.personas} personas · ${g.tipo.toLowerCase()} · ${g.ult} en ${MESES[mi(T.corte)]}</small></div>`
+        + `<div class="g-bar"><i style="width:${g.real / gmax * 100}%;background:var(${g.tipo === 'Operativo' ? '--ambar' : '--verde'})"></i></div>`
+        + `<div class="v">$${gf1(g.real)} M<small>${gpc(g.real / gtot)} del total · <span class="g-st ${s_[0]}">${q == null ? s_[1] : gpc(q) + ' de lo proy.'}</span></small></div></div>`; }).join(''));
+
+    // ---------- 3 · MO contra APU ----------
+    if (!ok('frentes_gerencia')) return;
+    const MO = ok('mano_obra') ? D('mano_obra') : { acts: [], sinapu: {} };
+    const FG = D('frentes_gerencia').filter((f) => (f.mo_ppto || 0) > 0.5 || (f.mo_real || 0) > 0.5);
+    const est = (pag, gan) => !gan ? (pag > 0.5 ? ['warn', 'sin MO en el APU'] : ['na', 'sin avance']) : pag / gan > 1.1 ? ['bad', 'por encima'] : pag / gan > .9 ? ['warn', 'al límite'] : ['ok', 'cubre'];
+    const tA = gsum(FG.map((f) => f.mo_ppto)), tG = gsum(FG.map((f) => f.mo_meta)), tP = gsum(FG.map((f) => f.mo_real));
+    const nBad = FG.filter((f) => est(f.mo_real || 0, f.mo_meta || 0)[0] === 'bad').length;
+    kpis('g-apu-k', [['MO del APU según avance', gf1(tG), 'M', `${gpc(tG / tA)} de ${gf1(tA)} M de MO en los APU (${FG.length} frentes)`],
+      ['Pagado en nómina', gf1(tP), 'M', `${gpc(tP / tG)} de la MO según avance`],
+      ['Saldo a favor acumulado', gsg(tG - tP), 'M', 'MO según avance menos pagado'],
+      ['Frentes por encima', nBad, '', 'pagado más del 110 % de la MO según avance', [nBad ? 'bad' : 'ok', nBad ? 'revisar' : 'ninguno']]]);
+    const st = C.state; st.apuOpen = st.apuOpen || {};
+    const tb = $('g-apu-tb'); tb.replaceChildren();
+    FG.slice().sort((a, b) => ((b.mo_real || 0) - (b.mo_meta || 0)) - ((a.mo_real || 0) - (a.mo_meta || 0))).forEach((f) => {
+      const e_ = est(f.mo_real || 0, f.mo_meta || 0), tr = document.createElement('tr'); tr.className = 'fr' + (st.apuOpen[f.f] ? ' abierto' : ''); tr.tabIndex = 0;
+      tr.innerHTML = `<td>${esc(f.frente)}</td><td class="n">${gf1(f.mo_ppto)}</td><td class="n">${gpc(f.pct_ej)}</td><td class="n">${gf1(f.mo_meta)}</td><td class="n"><b>${gf1(f.mo_real)}</b></td><td class="n ${(f.mo_meta || 0) - (f.mo_real || 0) >= 0 ? 'pos' : 'neg'}">${gsg((f.mo_meta || 0) - (f.mo_real || 0))}</td><td class="n">${f.mo_meta ? gpc(f.mo_real / f.mo_meta) : '—'}</td><td class="n">${f.mo_ppto ? gpc(f.mo_real / f.mo_ppto) : '—'}</td><td><span class="g-st ${e_[0]}">${e_[1]}</span></td>`;
+      const tog = () => { st.apuOpen[f.f] = !st.apuOpen[f.f]; drawGerTotal(); };
+      tr.addEventListener('click', tog); tr.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); tog(); } });
+      tb.appendChild(tr);
+      if (st.apuOpen[f.f]) {
+        const acts = (MO.acts || []).filter((x) => x.f === f.f).sort((a, b) => (b.pag / (b.apu || 1)) - (a.pag / (a.apu || 1)));
+        if (!acts.length) { const t2 = document.createElement('tr'); t2.className = 'act'; t2.innerHTML = '<td colspan="9">Sin nómina en actividades con MO en el APU.</td>'; tb.appendChild(t2); }
+        acts.forEach((x) => { const q = x.apu ? x.pag / x.apu : null, ok_ = q == null ? ['na', '—'] : q > (f.pct_ej || 0) * 1.1 + 1e-9 ? ['bad', q > 1 ? 'pasó el APU' : 'por encima del avance'] : q > (f.pct_ej || 0) * .9 ? ['warn', 'al límite'] : ['ok', 'cubre'];
+          const t2 = document.createElement('tr'); t2.className = 'act';
+          t2.innerHTML = `<td>${esc(x.c)} · ${esc(x.d)}</td><td class="n">${gf2(x.apu)}</td><td class="n">${gpc(f.pct_ej)}</td><td class="n">${gf2((x.apu || 0) * (f.pct_ej || 0))}</td><td class="n">${gf2(x.pag)}</td><td class="n ${(x.apu || 0) * (f.pct_ej || 0) - x.pag >= 0 ? 'pos' : 'neg'}">${gsg((x.apu || 0) * (f.pct_ej || 0) - x.pag, gf2)}</td><td class="n">${x.apu ? gpc(x.pag / ((x.apu || 0) * (f.pct_ej || 0) || 1)) : '—'}</td><td class="n">${gpc(q)}</td><td><span class="g-st ${ok_[0]}">${ok_[1]}</span></td>`;
+          tb.appendChild(t2); });
+        const sa = (MO.sinapu || {})[f.f]; if (sa) { const t3 = document.createElement('tr'); t3.className = 'act'; t3.innerHTML = `<td colspan="4">Nómina en actividades sin MO en el APU</td><td class="n">${gf2(sa)}</td><td colspan="4"><span class="g-st na">no comparable</span></td>`; tb.appendChild(t3); }
+      }
+    });
+    const trT = document.createElement('tr'); trT.className = 'tot';
+    trT.innerHTML = `<td>Total</td><td class="n">${gf1(tA)}</td><td class="n">${gpc(tG / tA)}</td><td class="n">${gf1(tG)}</td><td class="n">${gf1(tP)}</td><td class="n ${tG - tP >= 0 ? 'pos' : 'neg'}">${gsg(tG - tP)}</td><td class="n">${gpc(tP / tG)}</td><td class="n">${gpc(tP / tA)}</td><td></td>`; tb.appendChild(trT);
+  }
   function drawGer() {
+    seguro(drawGerTotal);
     if (!ok('mano_obra')) { html('g-k-mae', '<p class="vacio">Faltan los datos de mano de obra.</p>'); return; }
     const MO = D('mano_obra'), MS = MO.meses, NM = MS.length, CUT = MO.cut, OCT = MO.oct, M_ = MO.maestros, SAL = MO.sal || { proy: { mae: [], oa: [] }, real: { mae: [], oa: [] } };
     const mi = (s) => +s.slice(5, 7) - 1;
@@ -1449,18 +1623,18 @@ dash.calc('alertas_gerencia', {
     $('ger-eyebrow').textContent = `Gerencia · nómina SINCO a ${ult}` + (OCT ? ` · ${MLL[CUT]} estimado con la app al ${fechaCorta(OCT.hasta)}` : '');
 
     // ---------- 1 · maestros ----------
-    const mP = M_.mes.map((r) => r.proy || 0), mG = M_.mes.map((r) => r.real || 0);
+    const mPlan = M_.mes.map((r) => r.proy || 0), mProm = M_.ppto / M_.mes.length, mP = M_.mes.map(() => mProm), mG = M_.mes.map((r) => r.real || 0);
     const mPA = gsum(mP.slice(0, CUT)), mGA = gsum(mG.slice(0, CUT)), mE = OCT ? OCT.maestros * FAC : null;
     const ms = SAL.real.mae[CUT - 1] || {}, mp = SAL.proy.mae[CUT - 1] || {};
     kpis('g-k-mae', [['Pagado a ' + ult, gf1(mGA), 'M', `Proyectado ${gf1(mPA)} M`, [gst(mGA / mPA)[0], gpc(mGA / mPA) + ' de lo proyectado']],
-      ['Diferencia acumulada', gsg(mPA - mGA), 'M', mPA - mGA >= 0 ? 'Por debajo de lo proyectado' : 'Por encima de lo proyectado'],
+      ['Saldo a favor acumulado', gsg(mPA - mGA), 'M', mPA - mGA >= 0 ? 'Por debajo de lo proyectado' : 'Por encima de lo proyectado'],
       ['Salario promedio · ' + ult, gf2(ms.prom), 'M', `Proyectado ${gf2(mp.prom)} M por maestro`],
       ['Maestros en nómina · ' + ult, ms.n ?? '—', '', `Proyectados ${mp.n ?? '—'}`],
       ['Cierre al ritmo actual', gf1(M_.cierre_ritmo), 'M', `Presupuesto ${gf1(M_.ppto)} M`, [M_.cierre_ritmo > M_.ppto ? 'bad' : 'ok', gsg(M_.ppto - M_.cierre_ritmo) + ' M frente al presupuesto']]]);
     gBarras($('g-ch-mae'), { label: 'Maestros: proyectado y pagado por mes', P: mP, G: mG, est: mE, cut: CUT, ML });
     tablaMes('g-tb-mae', mP, mG, mE, CUT, ML);
     const ma = gAcum($('g-ch-mae-acc'), mP, mG, mE, CUT, ML, M_.ppto, 'Presupuesto');
-    $('g-n-mae-acc').textContent = `A ${ult} se han pagado ${gf1(ma.ga[CUT - 1])} M de ${gf1(ma.pa[CUT - 1])} M proyectados.` + (ma.gE != null ? ` Con ${MLL[CUT]} estimado: ${gf1(ma.gE)} M de ${gf1(ma.pa[CUT])} M.` : '') + ` La proyección completa suma ${gf1(ma.pa[NM - 1])} M contra un presupuesto de ${gf1(M_.ppto)} M.`;
+    $('g-n-mae-acc').textContent = `A ${ult} se han pagado ${gf1(ma.ga[CUT - 1])} M de ${gf1(ma.pa[CUT - 1])} M proyectados.` + (ma.gE != null ? ` Con ${MLL[CUT]} estimado: ${gf1(ma.gE)} M de ${gf1(ma.pa[CUT])} M.` : '') + ` El promedio es ${gf1(mProm)} M por mes (${gf1(M_.ppto)} M ÷ ${NM} meses). El plan de contratación de la A suma ${gf1(gsum(mPlan))} M; a ${ult} llevaba ${gf1(gsum(mPlan.slice(0, CUT)))} M.`;
     gSalario($('g-ch-mae-sal'), SAL.proy.mae, SAL.real.mae, CUT, ML); tablaSal('g-tb-mae-sal', SAL.proy.mae, SAL.real.mae, CUT, ML);
     $('g-n-mae-sal').textContent = `En ${ult} el costo promedio real fue ${gf2(ms.prom)} M por maestro contra ${gf2(mp.prom)} M proyectado.`;
     $('g-t-maefr').textContent = 'Reparto de maestros por frente · ' + ult;
@@ -1482,7 +1656,7 @@ dash.calc('alertas_gerencia', {
     $('g-chips').querySelectorAll('button').forEach((b) => { b.onclick = () => { st.gFr = b.dataset.f || null; redraw(); }; });
     const ritmo = s.g[CUT - 1] || 0, cierre = pg + ritmo * (M_.meses_rest || (NM - CUT));
     kpis('g-k-oa', [['Pagado a ' + ult, gf1(pg), 'M', `Proyectado ${gf1(pp)} M` + (sel ? ' · ' + shortN(sel) : ''), [gst(pp ? pg / pp : 9)[0], pp ? gpc(pg / pp) + ' de lo proyectado' : 'Sin proyectado']],
-      ['Diferencia acumulada', gsg(pp - pg), 'M', 'Incluye obra que aún no se ha hecho'],
+      ['Saldo a favor acumulado', gsg(pp - pg), 'M', 'Incluye obra que aún no se ha hecho'],
       ['Costo promedio · ' + ult, gf2(os.prom), 'M', `Proyectado ${gf2(op.prom)} M por persona`],
       ['En nómina · ' + ult, os.n ?? '—', '', 'Oficiales y ayudantes'],
       ['Cierre al ritmo actual', gf1(cierre), 'M', `MO en los APU ${gf1(s.apu)} M`, [cierre > s.apu ? 'bad' : 'ok', gsg(s.apu - cierre) + ' M frente a los APU']]]);
@@ -1524,7 +1698,7 @@ dash.calc('alertas_gerencia', {
       const hm = HE.mes, hML = hm.map((r) => MESES[mi(r.mes)]);
       gBarras($('g-ch-he'), { label: 'Horas extra pagadas contra el tope', P: hm.map((r) => r.proyectado), G: hm.map((r) => r.pagado), est: null, cut: hm.length, ML: hML });
       const u = hm[hm.length - 1];
-      $('g-n-he').textContent = `En ${MESL[mi(u.mes)]} se pagaron ${gf1(u.pagado)} M en extras y recargos, el ${gpc(u.pct)} del básico de ${u.personas} personas, contra un tope de ${gf1(u.proyectado)} M (${gpc(HE.tope)}).`;
+      $('g-n-he').textContent = `En ${MESL[mi(u.mes)]} se pagaron ${gf1(u.pagado)} M en extras y recargos, el ${gpc(u.pct)} del básico de ${u.personas} personas, contra un tope de ${gf1(u.proyectado)} M (${gpc(HE.tope)}): ${u.pagado > u.proyectado ? gf1(u.pagado - u.proyectado) + ' M por encima del tope en ese mes' : gf1(u.proyectado - u.pagado) + ' M por debajo del tope en ese mes'}. Acumulado de ${MESL[mi(hm[0].mes)]} a ${MESL[mi(u.mes)]}: ${gf1(gsum(hm.map((r) => r.pagado)))} M pagados contra ${gf1(gsum(hm.map((r) => r.proyectado)))} M de tope, saldo a favor ${gsg(gsum(hm.map((r) => r.proyectado - r.pagado)))} M.`;
     }
     if (HE.grupo.length) {
       const ms_ = HE.grupo[0].meses;
@@ -1539,14 +1713,14 @@ dash.calc('alertas_gerencia', {
     const TP = mP.map((v, i) => v + tot.p[i]), TG = mG.map((v, i) => v + tot.g[i]), TE = mE != null && OCT ? mE + (tot.e[CUT] || 0) * FAC : null;
     const TPA = mPA + tPA, TGA = mGA + tGA, sinTot = gsum(Object.values(MO.sinapu));
     kpis('g-tiles', [['Pagado a ' + ult, gf1(TGA), 'M', `Proyectado ${gf1(TPA)} M`, [gst(TGA / TPA)[0], gpc(TGA / TPA) + ' de lo proyectado']],
-      ['Diferencia acumulada', gsg(TPA - TGA), 'M', 'Proyectado menos pagado'],
+      ['Saldo a favor acumulado', gsg(TPA - TGA), 'M', 'Proyectado menos pagado'],
       [TE != null ? cap(MLL[CUT]) + ' estimado' : 'Último mes', gf1(TE != null ? TE : TG[CUT - 1]), 'M', `Proyectado ${gf1(TP[TE != null ? CUT : CUT - 1])} M`],
       ['Nómina sin MO en el APU', gf1(sinTot), 'M', 'Aparte, sin proyectado']]);
     const ta = gAcum($('g-ch-tot-acc'), TP, TG, TE, CUT, ML, null, '');
     $('g-n-tot-acc').textContent = `Pagado ${gf1(ta.ga[CUT - 1])} M de ${gf1(ta.pa[CUT - 1])} M proyectados a ${ult}` + (ta.gE != null ? `; ${gf1(ta.gE)} M de ${gf1(ta.pa[CUT])} M con ${MLL[CUT]} estimado.` : '.');
     const ar = []; let ac = 0; for (let i = 0; i <= CUT && i < NM; i++) { const g = i < CUT ? TG[i] : TE; if (g == null) break; ac += TP[i] - g; ar.push({ m: ML[i], d: TP[i] - g, a: ac, est: i === CUT }); }
     gAhorro($('g-ch-tot'), ar);
-    $('g-note-tot').textContent = `Ahorro acumulado ${gf1(ar[CUT - 1].a)} M a ${ult}` + (ar[CUT] ? ` y ${gf1(ar[CUT].a)} M con ${MLL[CUT]} estimado.` : '.') + ' La mayor parte viene de oficiales y ayudantes, donde el proyectado incluye obra que aún no se ha hecho.';
+    $('g-note-tot').textContent = `Saldo a favor acumulado ${gf1(ar[CUT - 1].a)} M a ${ult}` + (ar[CUT] ? ` y ${gf1(ar[CUT].a)} M con ${MLL[CUT]} estimado.` : '.') + ' La mayor parte viene de oficiales y ayudantes, donde el proyectado incluye obra que aún no se ha hecho.';
     tablaMes('g-tb-tot', TP, TG, TE, CUT, ML);
   }
 
@@ -1697,7 +1871,7 @@ dash.calc('alertas_gerencia', {
   function estado() {
     const m = D('meta'); if (!m || !m.generado) return;
     const e = $('estado'); e.replaceChildren();
-    [`App al ${fechaCorta(m.app_hasta)}`, `Nómina SINCO a ${C.mesN(m.nomina_hasta)}`, `Curva S ${fechaCorta(m.curva)}`, `Cobro hasta acta ${m.acta}`, m.sinco ? `SINCO ${fechaCorta(m.sinco)}` : null]
+    [`App al ${fechaCorta(m.app_hasta)}`, `Nómina SINCO a ${C.mesN(m.nomina_hasta)}`, `Curva S ${fechaCorta(m.curva)}`, m.sinco ? `SINCO ${fechaCorta(m.sinco)}` : null]
       .filter(Boolean).forEach((t) => e.appendChild(el('span', '', t)));
   }
 
