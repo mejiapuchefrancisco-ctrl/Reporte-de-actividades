@@ -441,8 +441,7 @@ tr.sel td { background: var(--verde-suave); }
       <h2 class="h2" id="g-sec-per">2 · Personas y gasto · administrativo y operativo</h2>
       <p class="g-note" style="margin-top:-6px" id="g-per-sub"></p>
       <div class="g-tiles" id="g-per-k"></div>
-      <div class="g-grid2e">
-        <div class="card g-card"><h2>Personas en nómina por mes</h2><div class="g-leg" id="g-per-leg"></div><div class="g-ch" id="g-per-ch"></div><p class="g-note">Personas distintas pagadas en el mes. Los puntos son las personas de la proyección.</p></div>
+      <div>
         <div class="card g-card"><h2>Participación en el gasto por mes</h2><div class="g-leg" id="g-pct-leg"></div><div class="g-ch" id="g-pct-ch"></div><p class="g-note">Porcentaje del costo de nómina de cada mes.</p></div>
       </div>
       <div class="card g-card">
@@ -464,7 +463,7 @@ tr.sel td { background: var(--verde-suave); }
 
       <!-- DETALLE · MAESTROS -->
       <h2 class="h2" id="g-sec-mae">Detalle · maestros · administración (A)</h2>
-      <p class="g-note" style="margin-top:-6px">Nómina SINCO de maestros contra la proyección del presupuesto de administración: cada maestro proyectado con su salario mensual, inicio y fin.</p>
+      <p class="g-note" style="margin-top:-6px" id="g-mae-sub">Nómina SINCO de maestros contra el promedio mensual del presupuesto de maestros, repartido en partes iguales en los meses de obra, igual que oficiales y ayudantes.</p>
       <div class="g-kpis5" id="g-k-mae"></div>
       <div class="card g-card">
         <h2>Mes a mes · proyectado y pagado real</h2>
@@ -1556,28 +1555,10 @@ dash.calc('alertas_gerencia', {
       ['Operativas', nO, '', `${gpc(nO / (nA + nO))} de las personas · ${gf1(cO)} M`, ['warn', gpc(cO / (cA + cO)) + ' del gasto']],
       ['Acumulado a ' + ult, gf1(realF), 'M', `Administrativo ${gpc(sumK('r_adm') / realF)} · operativo ${gpc(sumK('r_ope') / realF)}`]]);
     const leg2 = [['var(--verde)', 'Administrativas'], ['var(--ambar)', 'Operativas'], ['var(--tinta)', 'Proyectadas', 1]];
-    $('g-per-leg').innerHTML = leg2.map(([c, t, l]) => `<span><i style="background:${c};${l ? 'border-radius:50%;' : ''}"></i>${t}</span>`).join('');
     $('g-pct-leg').innerHTML = [['var(--verde)', 'Administrativo'], ['var(--ambar)', 'Operativo']].map(([c, t]) => `<span><i style="background:${c}"></i>${t}</span>`).join('');
     const RR = R.slice(0, CUT), ML2 = ML.slice(0, CUT);
     (() => {
-      const hb = $('g-per-ch'); hb.replaceChildren(); const W = 620, H = 300, L = 40, Rm = 10, Tm = 22, B = 30;
-      const sc = escala(Math.max(...RR.map((r) => Math.max((r.n_adm || 0) + (r.n_ope || 0), (r.np_adm || 0) + (r.np_ope || 0)))) * 1.1);
-      const sg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Personas por mes' }, hb);
-      const y = (v) => Tm + (H - Tm - B) * (1 - v / sc.hi), gw = (W - L - Rm) / RR.length, bw = gw * .55;
-      for (let v = 0; v <= sc.hi; v += sc.st) { sv('line', { x1: L, x2: W - Rm, y1: y(v), y2: y(v), style: 'stroke:var(--linea-2)' }, sg); sv('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, sg).textContent = v; }
-      RR.forEach((r, i) => {
-        const cx = L + gw * i + gw / 2, a1 = r.n_adm || 0, o1 = r.n_ope || 0;
-        sv('rect', { x: cx - bw / 2, y: y(a1), width: bw, height: y(0) - y(a1), style: 'fill:var(--verde)' }, sg);
-        sv('rect', { x: cx - bw / 2, y: y(a1 + o1), width: bw, height: y(a1) - y(a1 + o1), style: 'fill:var(--ambar)' }, sg);
-        if (a1 > 3) sv('text', { x: cx, y: y(a1 / 2) + 4, 'text-anchor': 'middle', style: 'fill:#fff;font-weight:700' }, sg).textContent = a1;
-        if (o1 > 3) sv('text', { x: cx, y: y(a1 + o1 / 2) + 4, 'text-anchor': 'middle', style: 'fill:#3a2a00;font-weight:700' }, sg).textContent = o1;
-        sv('text', { x: cx, y: y(a1 + o1) - 6, 'text-anchor': 'middle', class: 'lbl' }, sg).textContent = a1 + o1;
-        const np = (r.np_adm || 0) + (r.np_ope || 0); if (np) { const c = sv('circle', { cx: cx + bw / 2 + 7, cy: y(np), r: 4.5, style: 'fill:var(--panel);stroke:var(--tinta);stroke-width:2' }, sg); sv('title', {}, c).textContent = `Proyectadas ${Math.round(np)}`; }
-        sv('text', { x: cx, y: H - 10, 'text-anchor': 'middle' }, sg).textContent = ML2[i];
-      });
-    })();
-    (() => {
-      const hb = $('g-pct-ch'); hb.replaceChildren(); const W = 620, H = 300, L = 40, Rm = 10, Tm = 12, B = 30;
+      const hb = $('g-pct-ch'); hb.replaceChildren(); const W = 1000, H = 280, L = 40, Rm = 10, Tm = 12, B = 30;
       const sg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Participación en el gasto por mes' }, hb);
       const y = (v) => Tm + (H - Tm - B) * (1 - v), gw = (W - L - Rm) / RR.length, bw = gw * .55;
       [0, .25, .5, .75, 1].forEach((v) => { sv('line', { x1: L, x2: W - Rm, y1: y(v), y2: y(v), style: 'stroke:var(--linea-2)' }, sg); sv('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, sg).textContent = Math.round(v * 100) + '%'; });
@@ -1642,7 +1623,7 @@ dash.calc('alertas_gerencia', {
     $('ger-eyebrow').textContent = `Gerencia · nómina SINCO a ${ult}` + (OCT ? ` · ${MLL[CUT]} estimado con la app al ${fechaCorta(OCT.hasta)}` : '');
 
     // ---------- 1 · maestros ----------
-    const mP = M_.mes.map((r) => r.proy || 0), mG = M_.mes.map((r) => r.real || 0);
+    const mPlan = M_.mes.map((r) => r.proy || 0), mProm = M_.ppto / M_.mes.length, mP = M_.mes.map(() => mProm), mG = M_.mes.map((r) => r.real || 0);
     const mPA = gsum(mP.slice(0, CUT)), mGA = gsum(mG.slice(0, CUT)), mE = OCT ? OCT.maestros * FAC : null;
     const ms = SAL.real.mae[CUT - 1] || {}, mp = SAL.proy.mae[CUT - 1] || {};
     kpis('g-k-mae', [['Pagado a ' + ult, gf1(mGA), 'M', `Proyectado ${gf1(mPA)} M`, [gst(mGA / mPA)[0], gpc(mGA / mPA) + ' de lo proyectado']],
@@ -1653,7 +1634,7 @@ dash.calc('alertas_gerencia', {
     gBarras($('g-ch-mae'), { label: 'Maestros: proyectado y pagado por mes', P: mP, G: mG, est: mE, cut: CUT, ML });
     tablaMes('g-tb-mae', mP, mG, mE, CUT, ML);
     const ma = gAcum($('g-ch-mae-acc'), mP, mG, mE, CUT, ML, M_.ppto, 'Presupuesto');
-    $('g-n-mae-acc').textContent = `A ${ult} se han pagado ${gf1(ma.ga[CUT - 1])} M de ${gf1(ma.pa[CUT - 1])} M proyectados.` + (ma.gE != null ? ` Con ${MLL[CUT]} estimado: ${gf1(ma.gE)} M de ${gf1(ma.pa[CUT])} M.` : '') + ` La proyección completa suma ${gf1(ma.pa[NM - 1])} M contra un presupuesto de ${gf1(M_.ppto)} M.`;
+    $('g-n-mae-acc').textContent = `A ${ult} se han pagado ${gf1(ma.ga[CUT - 1])} M de ${gf1(ma.pa[CUT - 1])} M proyectados.` + (ma.gE != null ? ` Con ${MLL[CUT]} estimado: ${gf1(ma.gE)} M de ${gf1(ma.pa[CUT])} M.` : '') + ` El promedio es ${gf1(mProm)} M por mes (${gf1(M_.ppto)} M ÷ ${NM} meses). El plan de contratación de la A suma ${gf1(gsum(mPlan))} M; a ${ult} llevaba ${gf1(gsum(mPlan.slice(0, CUT)))} M.`;
     gSalario($('g-ch-mae-sal'), SAL.proy.mae, SAL.real.mae, CUT, ML); tablaSal('g-tb-mae-sal', SAL.proy.mae, SAL.real.mae, CUT, ML);
     $('g-n-mae-sal').textContent = `En ${ult} el costo promedio real fue ${gf2(ms.prom)} M por maestro contra ${gf2(mp.prom)} M proyectado.`;
     $('g-t-maefr').textContent = 'Reparto de maestros por frente · ' + ult;
