@@ -79,7 +79,10 @@ def construir(_leidas, app_hash, _app_df):
                          recargos=_csv("recargos.csv"),
                          eq_fact=_csv("equipos_facturado.csv", dtype={"frente": str}),
                          eq_apu=_csv("equipos_apu.csv", dtype={"frente": str}),
-                         anticipos=_csv("anticipos_contratistas.csv"))
+                         anticipos=_csv("anticipos_contratistas.csv"),
+                         proy_mo=_csv("proyeccion_mano_obra.csv", dtype={"mes": str}),
+                         proy_personas=_csv("proyeccion_personas.csv", dtype={"mes": str}),
+                         proy_ppto=_csv("proyeccion_presupuesto.csv"))
     return json.dumps(datos, ensure_ascii=False, allow_nan=False)
 
 

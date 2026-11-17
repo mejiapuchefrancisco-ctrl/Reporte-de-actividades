@@ -783,7 +783,8 @@ def leer_fuentes(fuentes):
     return L
 
 
-def construir(fuentes, mo_raw, hoy=None, recargos=None, eq_fact=None, eq_apu=None, anticipos=None, leidas=None):
+def construir(fuentes, mo_raw, hoy=None, recargos=None, eq_fact=None, eq_apu=None, anticipos=None, leidas=None,
+              proy_mo=None, proy_personas=None, proy_ppto=None):
     """fuentes: bytes de nomina, params, curva, hitos, base, maestro, contratos, actas (y opcional relacion_pagos);
     o bien `leidas` = leer_fuentes(fuentes). mo_raw: la hoja Registros de la app. Devuelve {nombre: filas} para el componente."""
     hoy = pd.Timestamp(hoy or pd.Timestamp.now(tz="America/Bogota").tz_localize(None))
@@ -809,11 +810,98 @@ def construir(fuentes, mo_raw, hoy=None, recargos=None, eq_fact=None, eq_apu=Non
     ger = datos_gerencia(o, S, H, Pc, L["cortes"], eq_fact, eq_apu, anticipos, hoy)
     ger.update(datos_por_frente(o, S, L["Cs"], L["As"], H, Pc, L["cortes"], mo, hoy))
     ger["mano_obra"] = datos_mano_obra(o, mop, mo, ger.get("maestros_frente"), pa)
+    try:
+        ger["mo_total"] = datos_mo_total(n, proy_mo, proy_personas, proy_ppto) if proy_mo is not None else None
+    except Exception as e_:
+        ger["mo_total"] = None
+        print("mo_total:", e_)
     ct = o["cortes"]
     meta = dict(generado=str(hoy)[:16], nomina_hasta=str(ct["nomina"]), curva=str(pd.Timestamp(ct["curva"]).date()), acta=int(ct["acta"]),
                 app_hasta=str(mo["fecha"].max().date()), inicio_app=str(ini_app.date()),
                 sinco=str(S["kpi"]["ult_acta"].date()) if S and pd.notna(S["kpi"].get("ult_acta")) else None)
     return _limpio({**adm, **ger, "meta": meta})
+
+
+# ---------------- gerencia: mano de obra total (administrativo + operativo) ----------------
+GRUPOS_ORDEN = ["Dirección y coordinación", "Residentes y profesionales", "Seguridad y salud en el trabajo", "Ambiental, social y arqueología",
+                "Almacén, aprovisionamiento y apoyo", "Maestros y auxiliares de maestro", "Oficiales y operadores", "Ayudantes"]
+
+
+def grupo_total(cargo):
+    """Cargo de la nómina SINCO -> (grupo, tipo). Mismo reparto de la presentación del 13-nov."""
+    c = _texto_simple(str(cargo))
+    if "maestro" in c:
+        return "Maestros y auxiliares de maestro", "Operativo"
+    if "oficial" in c or "operador" in c:
+        return "Oficiales y operadores", "Operativo"
+    if "ayudante" in c and "segur" not in c:
+        return "Ayudantes", "Operativo"
+    if any(k in c for k in ("director", "coordinador", "gerente", "lider")):
+        return "Dirección y coordinación", "Administrativo"
+    if "instalaciones" in c:
+        return "Residentes y profesionales", "Administrativo"
+    if "segur" in c or "seg y sal" in c or "sst" in c:
+        return "Seguridad y salud en el trabajo", "Administrativo"
+    if any(k in c for k in ("ambiental", "social", "arqueolog")):
+        return "Ambiental, social y arqueología", "Administrativo"
+    if any(k in c for k in ("almacen", "aprovisionamiento", "analista", "servicios generales")):
+        return "Almacén, aprovisionamiento y apoyo", "Administrativo"
+    return "Residentes y profesionales", "Administrativo"
+
+
+def datos_mo_total(n, proy, proy_personas, presupuesto):
+    """Nómina SINCO completa (todas las personas) contra la proyección de personal administrativo y operativo
+    (GG PROYECC final + MO de los APU repartida en 13 meses). Millones con 3 decimales."""
+    x = n.dropna(subset=["Cedula"]).copy()
+    for c in ["Valor", "Porcentaje", "Anio", "Mes"]:
+        x[c] = pd.to_numeric(x[c], errors="coerce")
+    x = x.dropna(subset=["Valor", "Anio", "Mes"])
+    x["costo"] = x["Valor"] * x["Porcentaje"].fillna(1)
+    x["mes"] = [f"{int(a)}-{int(m):02d}" for a, m in zip(x["Anio"], x["Mes"])]
+    x["cedula"] = x["Cedula"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    gt = x["Cargo"].map(grupo_total)
+    x["grupo"], x["tipo"] = gt.str[0], gt.str[1]
+    p = proy.copy()
+    p["mes"] = p["mes"].astype(str)
+    meses = sorted(set(p["mes"]) | set(x["mes"]))
+    reales = sorted(x["mes"].unique())
+    pt = p.pivot_table(index="mes", columns="tipo", values="valor", aggfunc="sum").reindex(meses).fillna(0)
+    rt = x.pivot_table(index="mes", columns="tipo", values="costo", aggfunc="sum")
+    rn = x.groupby(["mes", "tipo"])["cedula"].nunique().unstack()
+    pp = proy_personas.copy(); pp["mes"] = pp["mes"].astype(str)
+    pn = pp.pivot_table(index="mes", columns="tipo", values="personas", aggfunc="sum")
+    T = ("Administrativo", "Operativo")
+    mes = []
+    for m in meses:
+        r_ = m in reales
+        mes.append(dict(mes=m, real=r_, **{f"p_{t[:3].lower()}": _M(pt.loc[m].get(t, 0)) for t in T},
+                        **{f"r_{t[:3].lower()}": (_M(rt.loc[m].get(t, 0)) if r_ else None) for t in T},
+                        **{f"n_{t[:3].lower()}": (int(rn.loc[m].get(t, 0) or 0) if r_ and m in rn.index else None) for t in T},
+                        **{f"np_{t[:3].lower()}": (_r(pn.loc[m].get(t, 0), 1) if m in pn.index else None) for t in T}))
+    # grupos: real acumulado, proyectado a la fecha y total, personas distintas
+    pg = p
+    grupos = []
+    for g in GRUPOS_ORDEN:
+        xr = x[x["grupo"] == g]; pr = pg[pg["grupo"] == g]
+        tipo = "Operativo" if g in GRUPOS_ORDEN[5:] else "Administrativo"
+        grupos.append(dict(g=g, tipo=tipo, real=_M(xr["costo"].sum()), proy=_M(pr[pr["mes"].isin(reales)]["valor"].sum()),
+                           proy_total=_M(pr["valor"].sum()), personas=int(xr["cedula"].nunique()),
+                           ult=int(xr[xr["mes"] == reales[-1]]["cedula"].nunique()) if reales else 0))
+    # la MO de los APU (oficiales y ayudantes de las actividades) se proyectó en bloque: se reparte entre oficiales y ayudantes según lo pagado
+    apu = p[p["grupo"] == "Oficiales y ayudantes (APU)"]
+    ro = x[x["grupo"] == "Oficiales y operadores"]["costo"].sum(); ra = x[x["grupo"] == "Ayudantes"]["costo"].sum()
+    sh = ra / (ro + ra) if ro + ra else 0.5
+    a_f, a_t = apu[apu["mes"].isin(reales)]["valor"].sum(), apu["valor"].sum()
+    for g in grupos:
+        if g["g"] in ("Oficiales y operadores", "Ayudantes"):
+            k_ = (1 - sh) if g["g"] == "Oficiales y operadores" else sh
+            pr = p[p["grupo"] == g["g"]]
+            g["proy"] = _M(pr[pr["mes"].isin(reales)]["valor"].sum() + a_f * k_)
+            g["proy_total"] = _M(pr["valor"].sum() + a_t * k_)
+    ppto = presupuesto.set_index("tipo")["presupuesto"]
+    return dict(meses=meses, reales=reales, corte=reales[-1] if reales else None, mes=mes, grupos=grupos,
+                ppto=dict(adm=_M(ppto.get("Administrativo", 0)), ope=_M(ppto.get("Operativo", 0))),
+                fuente="Nómina SINCO (BD_Nomina_MO) contra la proyección de personal (GG PROYECC final del 15-jul y MO de los APU en 13 meses).")
 
 
 def _limpio(o):
