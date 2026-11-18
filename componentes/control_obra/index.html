@@ -426,8 +426,8 @@ tr.sel td { background: var(--verde-suave); }
       <p class="g-note" style="margin-top:-6px" id="g-rp-sub"></p>
       <div class="g-tiles" id="g-rp-k"></div>
       <div class="card g-card">
-        <h2>Costo mensual y acumulado</h2>
-        <p class="sub">Un solo eje, en millones. Barras: costo de cada mes (llenas: pagado real; claras: proyección). Líneas: acumulado mes a mes, real y proyectado.</p>
+        <h2>Costo mensual y acumulado · proyectado y pagado</h2>
+        <p class="sub">Dos ejes, ambos en millones de pesos. <b>Izquierdo</b>: costo de cada mes (barras). <b>Derecho</b>: acumulado desde abril (líneas). Las líneas de guía coinciden en los dos ejes.</p>
         <div class="g-leg" id="g-rp-leg"></div>
         <div class="g-ch" id="g-rp-ch"></div>
       </div>
@@ -1511,34 +1511,51 @@ dash.calc('alertas_gerencia', {
       ['Saldo a favor acumulado', gsg(ahorro), 'M', `Administrativo ${gsg(sumK('p_adm') - sumK('r_adm'))} · operativo ${gsg(sumK('p_ope') - sumK('r_ope'))}`],
       ['Cierre estimado', gf1(cierre), 'M', `Real a la fecha + proyección restante (${gf1(resto)} M). Proyección total ${gf1(proyTot)} M`],
       ['Frente al presupuesto', gsg(ppto - cierre), 'M', `Presupuesto de personal ${gf1(ppto)} M`, [cierre > ppto ? 'bad' : 'ok', cierre > ppto ? 'Cierre por encima' : 'Cierre por debajo']]]);
-    // gráfica combinada
-    $('g-rp-leg').innerHTML = [['var(--verde)', 'Administrativo'], ['var(--ambar)', 'Operativo'], ['var(--rojo)', 'Real acumulado', 1], ['var(--tinta)', 'Proyectado acumulado', 1]]
+    // gráfica combinada · eje izquierdo: costo del mes · eje derecho: acumulado (escala 10x, mismas guías)
+    $('g-rp-leg').innerHTML = [['var(--g-proy)', 'Proyectado del mes (sombreado) · eje izq.'], ['var(--verde)', 'Pagado administrativo · eje izq.'], ['var(--ambar)', 'Pagado operativo · eje izq.'], ['var(--tinta)', 'Proyectado acumulado · eje der.', 1], ['var(--rojo)', 'Pagado acumulado · eje der.', 1]]
       .map(([c, t, l]) => `<span><i style="background:${c};${l ? 'height:3px;width:18px;' : ''}"></i>${t}</span>`).join('');
-    const host = $('g-rp-ch'); host.replaceChildren();
-    const W = 980, H = 420, L = 58, Rm = 16, Tm = 30, B = 44, sc = escala(Math.max(...pA, ...rA) * 1.04);
-    const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Costo mensual real y proyectado, con acumulados' }, host);
-    const y = (v) => Tm + (H - Tm - B) * (1 - v / sc.hi), gw = (W - L - Rm) / NM, xc = (i) => L + gw * i + gw / 2, bw = Math.min(34, gw * .62);
-    for (let v = 0; v <= sc.hi; v += sc.st) { sv('line', { x1: L, x2: W - Rm, y1: y(v), y2: y(v), style: 'stroke:var(--linea-2)' }, svg); sv('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = v.toLocaleString('es-CO'); }
-    sv('text', { x: 4, y: 14 }, svg).textContent = 'Millones de pesos';
-    R.forEach((r, i) => {
-      const real = r.real, va = real ? r.r_adm : r.p_adm, vo = real ? r.r_ope : r.p_ope, op = real ? 1 : .35;
-      const ra = sv('rect', { x: xc(i) - bw / 2, y: y(va), width: bw, height: y(0) - y(va), style: `fill:var(--verde);opacity:${op}` }, svg);
-      const ro = sv('rect', { x: xc(i) - bw / 2, y: y(va + vo), width: bw, height: y(va) - y(va + vo), style: `fill:var(--ambar);opacity:${op}` }, svg);
-      sv('title', {}, ra).textContent = `${ML[i]} ${real ? 'real' : 'proyectado'} administrativo ${gf1(va)} M`; sv('title', {}, ro).textContent = `${ML[i]} ${real ? 'real' : 'proyectado'} operativo ${gf1(vo)} M`;
-      if (real) sv('text', { x: xc(i), y: y(va + vo) - 6, 'text-anchor': 'middle', class: 'lbl', style: 'paint-order:stroke;stroke:var(--panel);stroke-width:3px' }, svg).textContent = Math.round(va + vo);
-      sv('text', { x: xc(i), y: H - 24, 'text-anchor': 'middle' }, svg).textContent = ML[i];
-      if (i === 0 || r.mes.slice(0, 4) !== R[i - 1].mes.slice(0, 4)) sv('text', { x: xc(i), y: H - 8, 'text-anchor': 'middle', style: 'font-size:11px' }, svg).textContent = r.mes.slice(0, 4);
-    });
-    const xcut = L + gw * CUT; sv('line', { x1: xcut, x2: xcut, y1: Tm - 14, y2: H - B, style: 'stroke:var(--muted);stroke-dasharray:3 4' }, svg);
-    sv('text', { x: xcut + 6, y: Tm - 4 }, svg).textContent = 'corte ' + ML[CUT - 1];
-    sv('polyline', { points: pA.map((v, i) => xc(i) + ',' + y(v)).join(' '), style: 'fill:none;stroke:var(--tinta);stroke-width:2.5;stroke-dasharray:7 5' }, svg);
-    pA.forEach((v, i) => sv('circle', { cx: xc(i), cy: y(v), r: 4, style: 'fill:var(--panel);stroke:var(--tinta);stroke-width:2' }, svg));
-    sv('polyline', { points: rA.map((v, i) => xc(i) + ',' + y(v)).join(' '), style: 'fill:none;stroke:var(--rojo);stroke-width:3' }, svg);
-    rA.forEach((v, i) => sv('circle', { cx: xc(i), cy: y(v), r: 4, style: 'fill:var(--rojo)' }, svg));
-    const lab = (x, yy, t, c, anc) => sv('text', { x, y: yy, 'text-anchor': anc || 'end', class: 'lbl', style: `fill:${c};paint-order:stroke;stroke:var(--panel);stroke-width:4px` }, svg).textContent = t;
-    lab(xc(CUT - 1) - 8, y(pA[CUT - 1]) - 12, 'Proy. ' + Math.round(proyF).toLocaleString('es-CO'), 'var(--tinta)');
-    lab(xc(CUT - 1) - 8, y(rA[CUT - 1]) + 22, 'Real ' + Math.round(realF).toLocaleString('es-CO'), 'var(--rojo)');
-    lab(xc(NM - 1), y(pA[NM - 1]) - 12, Math.round(proyTot).toLocaleString('es-CO'), 'var(--tinta)');
+    (() => {
+      const host = $('g-rp-ch'); host.replaceChildren();
+      const W = 1000, H = 440, L = 62, Rm = 74, Tm = 40, B = 44;
+      const sL = escala(Math.max(...pT, ...rT.filter((v) => v != null)) * 1.12), k = [2, 5, 10, 20, 50].find((q) => q * sL.hi >= Math.max(...pA, ...rA) * 1.02) || 100, hiR = sL.hi * k;
+      const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Costo de cada mes y acumulado, proyectado y pagado' }, host);
+      const y = (v) => Tm + (H - Tm - B) * (1 - v / sL.hi), yR = (v) => Tm + (H - Tm - B) * (1 - v / hiR);
+      const gw = (W - L - Rm) / NM, xc = (i) => L + gw * i + gw / 2, sw = gw * .86, bw = gw * .56;
+      for (let v = 0; v <= sL.hi + 1e-9; v += sL.st) {
+        sv('line', { x1: L, x2: W - Rm, y1: y(v), y2: y(v), style: 'stroke:var(--linea-2)' }, svg);
+        sv('text', { x: L - 8, y: y(v) + 4, 'text-anchor': 'end' }, svg).textContent = v.toLocaleString('es-CO');
+        sv('text', { x: W - Rm + 8, y: y(v) + 4, 'text-anchor': 'start', style: 'fill:var(--rojo)' }, svg).textContent = (v * k).toLocaleString('es-CO');
+      }
+      sv('text', { x: 4, y: 16, style: 'font-weight:700' }, svg).textContent = 'Costo del mes (M)';
+      sv('text', { x: W - 4, y: 16, 'text-anchor': 'end', style: 'font-weight:700;fill:var(--rojo)' }, svg).textContent = 'Acumulado (M)';
+      R.forEach((r, i) => {
+        const fut = !r.real, p = pT[i];
+        const sh = sv('rect', { x: xc(i) - sw / 2, y: y(p), width: sw, height: y(0) - y(p), rx: 3, style: `fill:var(${fut ? '--g-fut' : '--g-proy'});opacity:${fut ? 1 : .55}` }, svg);
+        sv('title', {}, sh).textContent = `${ML[i]} proyectado del mes ${gf1(p)} M`;
+        sv('line', { x1: xc(i) - sw / 2, x2: xc(i) + sw / 2, y1: y(p), y2: y(p), style: `stroke:var(--muted);stroke-width:1.5;stroke-dasharray:${fut ? '3 3' : '0'}` }, svg);
+        if (!fut) {
+          const va = r.r_adm || 0, vo = r.r_ope || 0, g = va + vo;
+          const ra = sv('rect', { x: xc(i) - bw / 2, y: y(va), width: bw, height: y(0) - y(va), style: 'fill:var(--verde)' }, svg);
+          const ro = sv('rect', { x: xc(i) - bw / 2, y: y(g), width: bw, height: y(va) - y(g), style: 'fill:var(--ambar)' }, svg);
+          sv('title', {}, ra).textContent = `${ML[i]} pagado administrativo ${gf1(va)} M`; sv('title', {}, ro).textContent = `${ML[i]} pagado operativo ${gf1(vo)} M`;
+          sv('text', { x: xc(i), y: y(g) + 15, 'text-anchor': 'middle', style: 'fill:#fff;font-weight:700;font-size:12px' }, svg).textContent = Math.round(g).toLocaleString('es-CO');
+        }
+        sv('text', { x: xc(i), y: H - 24, 'text-anchor': 'middle' }, svg).textContent = ML[i];
+        if (i === 0 || r.mes.slice(0, 4) !== R[i - 1].mes.slice(0, 4)) sv('text', { x: xc(i), y: H - 8, 'text-anchor': 'middle', style: 'font-size:11px' }, svg).textContent = r.mes.slice(0, 4);
+      });
+      const area = [...rA.map((v, i) => [xc(i), yR(v)]), ...pA.slice(0, CUT).map((v, i) => [xc(i), yR(v)]).reverse()];
+      sv('polygon', { points: area.map((q) => q.join(',')).join(' '), style: 'fill:var(--rojo);opacity:.08' }, svg);
+      sv('polyline', { points: pA.map((v, i) => xc(i) + ',' + yR(v)).join(' '), style: 'fill:none;stroke:var(--tinta);stroke-width:2.5;stroke-dasharray:7 5' }, svg);
+      pA.forEach((v, i) => { const c = sv('circle', { cx: xc(i), cy: yR(v), r: 4, style: 'fill:var(--panel);stroke:var(--tinta);stroke-width:2' }, svg); sv('title', {}, c).textContent = `${ML[i]} proyectado acumulado ${gf1(v)} M`; });
+      sv('polyline', { points: rA.map((v, i) => xc(i) + ',' + yR(v)).join(' '), style: 'fill:none;stroke:var(--rojo);stroke-width:3' }, svg);
+      rA.forEach((v, i) => { const c = sv('circle', { cx: xc(i), cy: yR(v), r: 4, style: 'fill:var(--rojo)' }, svg); sv('title', {}, c).textContent = `${ML[i]} pagado acumulado ${gf1(v)} M · saldo a favor ${gsg(pA[i] - v)} M`; });
+      const lab = (x, yy, t, c, anc) => sv('text', { x, y: yy, 'text-anchor': anc || 'end', class: 'lbl', style: `fill:${c};paint-order:stroke;stroke:var(--panel);stroke-width:4px` }, svg).textContent = t;
+      lab(xc(CUT - 1) - 10, yR(pA[CUT - 1]) - 10, 'Proy. acum. ' + Math.round(proyF).toLocaleString('es-CO'), 'var(--tinta)');
+      lab(xc(CUT - 1) + 10, yR(rA[CUT - 1]) + 4, 'Pagado acum. ' + Math.round(realF).toLocaleString('es-CO') + ' · saldo a favor ' + gsg(ahorro), 'var(--rojo)', 'start');
+      lab(xc(NM - 1), yR(pA[NM - 1]) - 12, Math.round(proyTot).toLocaleString('es-CO'), 'var(--tinta)');
+      const xcut = L + gw * CUT; sv('line', { x1: xcut, x2: xcut, y1: Tm - 14, y2: H - B, style: 'stroke:var(--muted);stroke-dasharray:3 4' }, svg);
+      sv('text', { x: xcut + 6, y: Tm - 2 }, svg).textContent = 'corte ' + ML[CUT - 1];
+    })();
     // tabla
     let ap = 0, ar = 0, h = '';
     R.slice(0, CUT).forEach((r, i) => {
