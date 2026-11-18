@@ -463,7 +463,7 @@ tr.sel td { background: var(--verde-suave); }
 
       <!-- DETALLE · MAESTROS -->
       <h2 class="h2" id="g-sec-mae">Detalle · maestros · administración (A)</h2>
-      <p class="g-note" style="margin-top:-6px" id="g-mae-sub">Nómina SINCO de maestros contra el promedio mensual del presupuesto de maestros, repartido en partes iguales en los meses de obra, igual que oficiales y ayudantes.</p>
+      <p class="g-note" style="margin-top:-6px" id="g-mae-sub">Nómina SINCO de maestros contra el costo proyectado del presupuesto de administración: cada maestro proyectado con su salario mensual, inicio y fin.</p>
       <div class="g-kpis5" id="g-k-mae"></div>
       <div class="card g-card">
         <h2>Mes a mes · proyectado y pagado real</h2>
@@ -1492,6 +1492,8 @@ dash.calc('alertas_gerencia', {
   const kpis = (id, arr) => html(id, arr.map((k) => `<div class="g-tile"><span class="k">${k[0]}</span><span class="v">${k[1]}${k[2] ? ` <small>${k[2]}</small>` : ''}</span>${k[3] ? `<span class="s">${k[3]}</span>` : ''}${k[4] ? `<span class="g-pill ${k[4][0]}">${k[4][1]}</span>` : ''}</div>`).join(''));
 
 
+  // 14 - Guía socioambiental: la cuadrilla ambiental se proyecta con los costos de la A (brigada ambiental), no con el APU
+  const AMB = '15';
   // ===================== GERENCIA · personal completo =====================
   function drawGerTotal() {
     const T = ok('mo_total') ? D('mo_total') : null;
@@ -1580,7 +1582,7 @@ dash.calc('alertas_gerencia', {
     // ---------- 3 · MO contra APU ----------
     if (!ok('frentes_gerencia')) return;
     const MO = ok('mano_obra') ? D('mano_obra') : { acts: [], sinapu: {} };
-    const FG = D('frentes_gerencia').filter((f) => (f.mo_ppto || 0) > 0.5 || (f.mo_real || 0) > 0.5);
+    const FG = D('frentes_gerencia').filter((f) => f.f !== AMB && ((f.mo_ppto || 0) > 0.5 || (f.mo_real || 0) > 0.5));
     const est = (pag, gan) => !gan ? (pag > 0.5 ? ['warn', 'sin MO en el APU'] : ['na', 'sin avance']) : pag / gan > 1.1 ? ['bad', 'por encima'] : pag / gan > .9 ? ['warn', 'al límite'] : ['ok', 'cubre'];
     const tA = gsum(FG.map((f) => f.mo_ppto)), tG = gsum(FG.map((f) => f.mo_meta)), tP = gsum(FG.map((f) => f.mo_real));
     const nBad = FG.filter((f) => est(f.mo_real || 0, f.mo_meta || 0)[0] === 'bad').length;
@@ -1623,7 +1625,7 @@ dash.calc('alertas_gerencia', {
     $('ger-eyebrow').textContent = `Gerencia · nómina SINCO a ${ult}` + (OCT ? ` · ${MLL[CUT]} estimado con la app al ${fechaCorta(OCT.hasta)}` : '');
 
     // ---------- 1 · maestros ----------
-    const mPlan = M_.mes.map((r) => r.proy || 0), mProm = M_.ppto / M_.mes.length, mP = M_.mes.map(() => mProm), mG = M_.mes.map((r) => r.real || 0);
+    const mPlan = M_.mes.map((r) => r.proy || 0), mP = mPlan, mG = M_.mes.map((r) => r.real || 0);
     const mPA = gsum(mP.slice(0, CUT)), mGA = gsum(mG.slice(0, CUT)), mE = OCT ? OCT.maestros * FAC : null;
     const ms = SAL.real.mae[CUT - 1] || {}, mp = SAL.proy.mae[CUT - 1] || {};
     kpis('g-k-mae', [['Pagado a ' + ult, gf1(mGA), 'M', `Proyectado ${gf1(mPA)} M`, [gst(mGA / mPA)[0], gpc(mGA / mPA) + ' de lo proyectado']],
@@ -1634,7 +1636,7 @@ dash.calc('alertas_gerencia', {
     gBarras($('g-ch-mae'), { label: 'Maestros: proyectado y pagado por mes', P: mP, G: mG, est: mE, cut: CUT, ML });
     tablaMes('g-tb-mae', mP, mG, mE, CUT, ML);
     const ma = gAcum($('g-ch-mae-acc'), mP, mG, mE, CUT, ML, M_.ppto, 'Presupuesto');
-    $('g-n-mae-acc').textContent = `A ${ult} se han pagado ${gf1(ma.ga[CUT - 1])} M de ${gf1(ma.pa[CUT - 1])} M proyectados.` + (ma.gE != null ? ` Con ${MLL[CUT]} estimado: ${gf1(ma.gE)} M de ${gf1(ma.pa[CUT])} M.` : '') + ` El promedio es ${gf1(mProm)} M por mes (${gf1(M_.ppto)} M ÷ ${NM} meses). El plan de contratación de la A suma ${gf1(gsum(mPlan))} M; a ${ult} llevaba ${gf1(gsum(mPlan.slice(0, CUT)))} M.`;
+    $('g-n-mae-acc').textContent = `A ${ult} se han pagado ${gf1(ma.ga[CUT - 1])} M de ${gf1(ma.pa[CUT - 1])} M proyectados.` + (ma.gE != null ? ` Con ${MLL[CUT]} estimado: ${gf1(ma.gE)} M de ${gf1(ma.pa[CUT])} M.` : '') + ` El costo proyectado completo suma ${gf1(ma.pa[NM - 1])} M contra un presupuesto de ${gf1(M_.ppto)} M.`;
     gSalario($('g-ch-mae-sal'), SAL.proy.mae, SAL.real.mae, CUT, ML); tablaSal('g-tb-mae-sal', SAL.proy.mae, SAL.real.mae, CUT, ML);
     $('g-n-mae-sal').textContent = `En ${ult} el costo promedio real fue ${gf2(ms.prom)} M por maestro contra ${gf2(mp.prom)} M proyectado.`;
     $('g-t-maefr').textContent = 'Reparto de maestros por frente · ' + ult;
@@ -1642,7 +1644,7 @@ dash.calc('alertas_gerencia', {
     html('g-maefr', mf.length ? mf.map((x) => `<div class="g-it"><span class="n">${esc(shortN(x.f))}</span><span><b>${gf1(x.real)} M</b> <small style="color:var(--muted)">${gpc(x.pct || 0)}</small></span><div class="g-bar"><i style="width:${x.real / mfx * 100}%;background:var(--verde)"></i></div></div>`).join('') : '<p class="vacio">Sin reparto por frente para este mes.</p>');
 
     // ---------- 2 · oficiales y ayudantes ----------
-    const FR = Object.keys(MO.apu).filter((f) => MO.apu[f] > 0).sort();
+    const FR = Object.keys(MO.apu).filter((f) => MO.apu[f] > 0 && f !== AMB).sort();
     const ser = (f) => { const fs = f ? [f] : FR; const p = Array(NM).fill(0), g = Array(NM).fill(0), e = Array(NM).fill(0); let apu = 0;
       fs.forEach((k) => { apu += MO.apu[k] || 0; for (let i = 0; i < NM; i++) { p[i] += (MO.apu[k] || 0) / NM; g[i] += (MO.pag[k] || [])[i] || 0; e[i] += (MO.est[k] || [])[i] || 0; } });
       return { p, g, e, apu }; };
@@ -1651,7 +1653,7 @@ dash.calc('alertas_gerencia', {
     const tPA = gsum(tot.p.slice(0, CUT)), tGA = gsum(tot.g.slice(0, CUT));
     const pp = gsum(s.p.slice(0, CUT)), pg = gsum(s.g.slice(0, CUT)), oc = s.e[CUT] || 0, ocC = OCT ? oc * FAC : null;
     const os = SAL.real.oa[CUT - 1] || {}, op = SAL.proy.oa[CUT - 1] || {};
-    $('g-base').textContent = `Pagado = nómina SINCO en las actividades con mano de obra en su APU. Proyectado = MO de esos APU (${gf1(tot.apu)} M) repartida en partes iguales en los ${NM} meses de obra: ${gf1(tot.apu / NM)} M por mes.`;
+    $('g-base').textContent = `Pagado = nómina SINCO en las actividades con mano de obra en su APU, sin la cuadrilla ambiental (14 - Guía socioambiental), que se mide con los costos de la A. Proyectado = MO de esos APU (${gf1(tot.apu)} M) repartida en partes iguales en los ${NM} meses de obra: ${gf1(tot.apu / NM)} M por mes.`;
     html('g-chips', [['', 'Todos']].concat(FR.map((f) => [f, shortN(f)])).map(([f, n]) => `<button type="button" class="g-chip" data-f="${f}" aria-pressed="${(sel || '') === f}">${esc(n)}</button>`).join(''));
     $('g-chips').querySelectorAll('button').forEach((b) => { b.onclick = () => { st.gFr = b.dataset.f || null; redraw(); }; });
     const ritmo = s.g[CUT - 1] || 0, cierre = pg + ritmo * (M_.meses_rest || (NM - CUT));
@@ -1676,11 +1678,11 @@ dash.calc('alertas_gerencia', {
       return `<tr class="${sel === r.f ? 'sel' : ''}"><td><button type="button" class="g-rb" data-f="${r.f}">${esc(nameOf(r.f))}</button></td><td class="n">${gf1(r.apu)}</td><td class="n">${gf1(r.pp)}</td><td class="n">${gf1(r.pg)}</td><td class="n"><span class="g-pill ${c}">${p == null ? 'Sin proyectado' : gpc(p)}</span></td><td class="n">${gpc(cons)}<span class="g-mini"><i style="width:${Math.min(100, cons * 100)}%;background:var(--${cons > 1 ? 'rojo' : 'verde'})"></i></span></td></tr>`; }).join('')
       + `<tr class="tot"><td>Total</td><td class="n">${gf1(tot.apu)}</td><td class="n">${gf1(tPA)}</td><td class="n">${gf1(tGA)}</td><td class="n"><span class="g-pill ${gst(tGA / tPA)[0]}">${gpc(tGA / tPA)}</span></td><td class="n">${gpc(tGA / tot.apu)}</td></tr>`);
     $('g-tb-fr').querySelectorAll('.g-rb').forEach((b) => { b.onclick = () => { st.gFr = st.gFr === b.dataset.f ? null : b.dataset.f; redraw(); }; });
-    const over = MO.acts.filter((a) => (!sel || a.f === sel) && a.pag > a.apu).sort((a, b) => (b.pag - b.apu) - (a.pag - a.apu));
+    const over = MO.acts.filter((a) => a.f !== AMB && (!sel || a.f === sel) && a.pag > a.apu).sort((a, b) => (b.pag - b.apu) - (a.pag - a.apu));
     $('g-t-act').textContent = 'Actividades que ya pasaron su APU' + (sel ? ' · ' + shortN(sel) : '');
     $('g-s-act').textContent = over.length ? `${over.length} actividades, ${gf1(gsum(over.map((a) => a.pag - a.apu)))} M por encima de la MO de su APU. La raya marca el 100 % del APU.` : 'Ninguna actividad de este frente ha pasado la MO de su APU.';
     html('g-acts', over.slice(0, 12).map((a) => { const mx = Math.max(a.pag, a.apu); return `<div class="g-it"><span class="n">${esc(a.d)}<small>${a.c} · ${esc(shortN(a.f))} · APU ${gf1(a.apu)} M, pagado ${gf1(a.pag)} M</small></span><span class="x">${gpc(a.pag / a.apu)}</span><div class="g-bar"><i style="width:${a.pag / mx * 100}%;background:var(--rojo)"></i><span class="pp" style="left:${a.apu / mx * 100}%"></span></div></div>`; }).join(''));
-    const rs = MO.sinmo.filter((r) => !sel || r.f === sel);
+    const rs = MO.sinmo.filter((r) => r.f !== AMB && (!sel || r.f === sel));
     const TY = [['Subcontrato', 'El APU lo paga como subcontrato; si lo hace la cuadrilla propia, se paga dos veces.'], ['APU sin mano de obra', 'El APU solo trae materiales o equipo.'], ['No está en el presupuesto', 'Código de la app que no existe en el presupuesto: posible ítem nuevo.']];
     html('g-sin-tiles', TY.map(([t, w]) => { const xx = rs.filter((r) => r.tipo === t); return `<div class="g-tile"><span class="k">${t}</span><span class="v">${gf1(gsum(xx.map((r) => r.pag)))} M <small>${xx.length} actividades</small></span><span class="s">${w}</span></div>`; }).join(''));
     $('g-t-sin').textContent = 'Nómina sin mano de obra en el APU' + (sel ? ' · ' + shortN(sel) : '') + ` · ${rs.length} actividades, ${gf1(gsum(rs.map((r) => r.pag)))} M`;
